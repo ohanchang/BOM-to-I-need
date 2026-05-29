@@ -1,0 +1,1805 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOM to I need — 批次格式整理與成本拆解工具</title>
+<meta name="description" content="自動識別已整理/原始BOM、修正跑偏欄位、完成I need格式重構與多工作表（分頁）拆分">
+<link rel="icon" type="image/png" href="favicon.png">
+<script>
+  // Pre-load theme preference to avoid FOUC
+  (function() {
+    const savedTheme = localStorage.getItem('bom-to-i-need-theme') || 'dark';
+    if (savedTheme === 'light') {
+      document.documentElement.classList.add('light-theme');
+    }
+  })();
+</script>
+<script src="static/js/xlsx.full.min.js"></script>
+<script src="static/js/jszip.min.js"></script>
+<style>
+  :root {
+    --bg-primary: #0b0f19;
+    --bg-secondary: #111827;
+    --bg-card: #1f2937;
+    --bg-card-hover: #374151;
+    --accent: #6366f1;
+    --accent-light: #818cf8;
+    --accent-glow: rgba(99, 102, 241, 0.25);
+    --success: #10b981;
+    --success-bg: rgba(16, 185, 129, 0.15);
+    --warning: #f59e0b;
+    --warning-bg: rgba(245, 158, 11, 0.15);
+    --error: #ef4444;
+    --error-bg: rgba(239, 68, 68, 0.15);
+    --text-primary: #f9fafb;
+    --text-secondary: #d1d5db;
+    --text-muted: #9ca3af;
+    --border: #374151;
+    --radius: 16px;
+    --font: 'Outfit', 'Inter', 'Segoe UI', system-ui, sans-serif;
+  }
+
+  :root.light-theme {
+    --bg-primary: #f3f4f6;
+    --bg-secondary: #ffffff;
+    --bg-card: #f9fafb;
+    --bg-card-hover: #e5e7eb;
+    --accent: #4f46e5;
+    --accent-light: #6366f1;
+    --accent-glow: rgba(79, 70, 229, 0.15);
+    --success: #059669;
+    --success-bg: rgba(5, 150, 105, 0.1);
+    --warning: #d97706;
+    --warning-bg: rgba(217, 119, 6, 0.1);
+    --error: #dc2626;
+    --error-bg: rgba(220, 38, 38, 0.1);
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --border: #d1d5db;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  /* Header */
+  header {
+    margin-bottom: 40px;
+    text-align: center;
+    position: relative;
+  }
+
+  header h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    background: linear-gradient(135deg, var(--text-primary) 30%, var(--accent-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  header p {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+  }
+
+  /* Theme Toggle Button */
+  .theme-toggle-container {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 10;
+  }
+
+  .theme-toggle-btn {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  .theme-toggle-btn:hover {
+    background: var(--bg-card-hover);
+    transform: scale(1.05);
+    border-color: var(--accent);
+  }
+
+  .theme-icon-light { display: none; }
+  .theme-icon-dark { display: block; }
+
+  :root.light-theme .theme-icon-light { display: block; }
+  :root.light-theme .theme-icon-dark { display: none; }
+
+  /* Dashboard Cards */
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .stat-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+  }
+
+  .stat-card.total::before { background: var(--accent); }
+  .stat-card.processed::before { background: var(--text-muted); }
+  .stat-card.fixed::before { background: var(--warning); }
+  .stat-card.normal::before { background: var(--success); }
+  .stat-card.error::before { background: var(--error); }
+
+  .stat-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 20px -10px rgba(0, 0, 0, 0.5);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .stat-num {
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  /* Control Panel */
+  .control-panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 32px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  @media (min-width: 768px) {
+    .control-panel {
+      grid-template-columns: 1fr auto;
+      align-items: center;
+    }
+  }
+
+  .settings-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .setting-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .setting-item label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .input-text {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    width: 140px;
+    transition: all 0.2s;
+  }
+
+  .input-text:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+
+  .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    margin-top: 18px;
+  }
+
+  .checkbox-group input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .button-group {
+    display: flex;
+    gap: 12px;
+  }
+
+  .btn {
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px var(--accent-glow);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px var(--accent-glow);
+    filter: brightness(1.1);
+  }
+
+  .btn-secondary {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+  }
+
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  /* Upload Drop Zone */
+  .drop-zone {
+    background: var(--bg-secondary);
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-bottom: 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.05);
+  }
+
+  .drop-icon {
+    font-size: 3rem;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .drop-text {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .drop-subtext {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+
+  #fileInput {
+    display: none;
+  }
+
+  /* Progress Bar */
+  .progress-container {
+    width: 100%;
+    background: var(--bg-card);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 32px;
+    display: none;
+  }
+
+  .progress-bar {
+    width: 0%;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.1s;
+  }
+
+  /* Section Title */
+  .section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* File Card List */
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .file-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    transition: all 0.2s;
+  }
+
+  .file-card:hover {
+    border-color: rgba(255,255,255,0.1);
+  }
+
+  .file-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .file-name {
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .badge-processed { background: var(--bg-card); color: var(--text-muted); }
+  .badge-fixed { background: var(--warning-bg); color: var(--warning); }
+  .badge-normal { background: var(--success-bg); color: var(--success); }
+  .badge-error { background: var(--error-bg); color: var(--error); }
+
+  .file-meta {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .file-meta span {
+    background: var(--bg-card);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+  }
+
+  .detail-toggle {
+    background: none;
+    border: none;
+    color: var(--accent-light);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .detail-toggle:hover {
+    text-decoration: underline;
+  }
+
+  .detail-body {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  .detail-body.hidden {
+    display: none;
+  }
+
+  /* Tabs inside file card */
+  .card-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  .card-tab {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+
+  .card-tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .tab-content {
+    background: var(--bg-primary);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  /* Clean Table Styling */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-align: left;
+  }
+
+  th, td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th {
+    background: var(--bg-card);
+    font-weight: 700;
+    color: var(--text-primary);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+
+  tr:hover td {
+    background: rgba(99, 102, 241, 0.04);
+  }
+
+  /* Log table specific styling */
+  .log-table th, .log-table td {
+    white-space: normal;
+  }
+
+  .log-row-num { color: var(--text-muted); width: 60px; }
+  .log-part { font-weight: 600; width: 120px; }
+  .log-val-old { color: var(--error); }
+  .log-val-new { color: var(--success); }
+
+  /* Utility classes */
+  .txt-right { text-align: right; }
+  .bold { font-weight: 700; }
+  .accent-txt { color: var(--accent-light); }
+  .success-txt { color: var(--success); }
+  .warning-txt { color: var(--warning); }
+
+  /* Row text and bg utility classes */
+  .text-normal-row { color: var(--text-primary); }
+  .text-muted-row { color: var(--text-muted); }
+  .text-blue-row { color: #3b82f6; }
+  .text-orange-row { color: #f97316; }
+  .bg-yellow-row { background: var(--warning-bg) !important; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="theme-toggle-container">
+      <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="切換主題">
+        <span class="theme-icon-dark">🌙</span>
+        <span class="theme-icon-light">☀️</span>
+      </button>
+    </div>
+    <h1>BOM to I need</h1>
+    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.1)</p>
+  </header>
+
+  <!-- Dashboard -->
+  <div class="dashboard">
+    <div class="stat-card total">
+      <div class="stat-num" id="statTotal">0</div>
+      <div class="stat-label">載入檔案總數</div>
+    </div>
+    <div class="stat-card processed">
+      <div class="stat-num id" id="statProcessed">0</div>
+      <div class="stat-label">已整理/略過</div>
+    </div>
+    <div class="stat-card fixed">
+      <div class="stat-num" id="statFixed">0</div>
+      <div class="stat-label">已修正偏移</div>
+    </div>
+    <div class="stat-card normal">
+      <div class="stat-num" id="statNormal">0</div>
+      <div class="stat-label">原始BOM格式正常</div>
+    </div>
+    <div class="stat-card error">
+      <div class="stat-num" id="statError">0</div>
+      <div class="stat-label">異常/讀取失敗</div>
+    </div>
+  </div>
+
+  <!-- Control Panel -->
+  <div class="control-panel">
+    <div class="settings-group">
+      <div class="setting-item">
+        <label for="exchangeRate">全域美金匯率</label>
+        <input type="number" id="exchangeRate" class="input-text" step="0.01" min="0.01" value="30.00">
+      </div>
+      <label class="checkbox-group">
+        <input type="checkbox" id="skipProcessed" checked>
+        <span>略過已整理的 BOM 檔案 (不加入壓縮包)</span>
+      </label>
+    </div>
+    <div class="button-group">
+      <button class="btn btn-secondary" id="btnClear" disabled>清空清單</button>
+      <button class="btn btn-primary" id="btnDownload" disabled>一鍵打包下載 (ZIP)</button>
+    </div>
+  </div>
+
+  <!-- Upload Drop Zone -->
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">📤</div>
+    <div class="drop-text">拖放複數個 BOM 檔案至此，或點擊選取檔案</div>
+    <div class="drop-subtext">支援 Excel (.xls, .xlsx) 格式</div>
+    <input type="file" id="fileInput" multiple accept=".xls, .xlsx, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="progress-container" id="progressContainer">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <!-- Results Section -->
+  <div class="section-title">
+    <span>處理檔案清單</span>
+  </div>
+  <div class="file-list" id="fileList"></div>
+</div>
+
+<script>
+/* ======== GLOBAL STATE ======== */
+let results = []; // Store results of processed files
+
+/* ======== CONSTANTS FOR BOM FIX & I NEED ======== */
+const STANDARD_HEADER_ROW = 11; // 0-indexed row 11 is row 12
+const STANDARD_COL_COUNT = 13;
+const STANDARD_HEADERS = [
+  "No", "階層", "料號", "規格項目-名稱說明", "UOM",
+  "使用數量", "插件位置", "ERP Status", "LT",
+  "是否為安規料", "單價", "ASL狀態", "最新報價日(日/月/年)"
+];
+
+/* ======== DOM ELEMENTS ======== */
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const progressContainer = document.getElementById('progressContainer');
+const progressBar = document.getElementById('progressBar');
+const btnClear = document.getElementById('btnClear');
+const btnDownload = document.getElementById('btnDownload');
+const exchangeRateInput = document.getElementById('exchangeRate');
+const skipProcessedInput = document.getElementById('skipProcessed');
+
+// Load last saved rate
+const savedRate = localStorage.getItem('bom-to-i-need-rate');
+if (savedRate) {
+  exchangeRateInput.value = parseFloat(savedRate).toFixed(2);
+} else {
+  exchangeRateInput.value = '30.00';
+}
+
+exchangeRateInput.addEventListener('change', () => {
+  let val = parseFloat(exchangeRateInput.value);
+  if (isNaN(val) || val <= 0) val = 30.00;
+  exchangeRateInput.value = val.toFixed(2);
+  localStorage.setItem('bom-to-i-need-rate', val.toFixed(2));
+});
+
+/* ======== EVENT LISTENERS ======== */
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', handleFileSelect);
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('dragover');
+});
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length > 0) {
+    processFiles(e.dataTransfer.files);
+  }
+});
+
+btnClear.addEventListener('click', () => {
+  results = [];
+  updateDashboard();
+  fileList.innerHTML = '';
+  btnClear.disabled = true;
+  btnDownload.disabled = true;
+});
+
+btnDownload.addEventListener('click', downloadZip);
+
+/* ======== FILE PROCESSING ======== */
+function handleFileSelect(e) {
+  if (e.target.files.length > 0) {
+    processFiles(e.target.files);
+  }
+}
+
+async function processFiles(files) {
+  btnClear.disabled = true;
+  btnDownload.disabled = true;
+  progressContainer.style.display = 'block';
+  progressBar.style.width = '0%';
+
+  const rateValue = parseFloat(exchangeRateInput.value) || 30.0;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    progressBar.style.width = ((i + 1) / files.length * 100) + '%';
+    
+    // Skip file test scripts or invalid files
+    if (file.name === 'read_test.js' || file.name === 'verify.js') continue;
+
+    try {
+      const data = await readFileAsArrayBuffer(file);
+      const wb = XLSX.read(data, { type: 'array' });
+      const result = processBOMWorkbook(wb, file.name, rateValue);
+      results.push(result);
+    } catch (err) {
+      results.push({
+        filename: file.name,
+        status: 'error',
+        fixedWb: null,
+        issues: ['讀取失敗: ' + err.message],
+        fixLog: [],
+        bomData: [],
+        highLevelSummary: [],
+        categoryBreakdown: []
+      });
+    }
+  }
+
+  updateDashboard();
+  renderResults();
+  progressContainer.style.display = 'none';
+  btnClear.disabled = false;
+  fileInput.value = '';
+}
+
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(new Uint8Array(e.target.result));
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/* ======== DETECT AND PROCESS SINGLE WORKBOOK ======== */
+function applyStylesToSheet(sheet, sheetType) {
+  if (!sheet) return;
+  const hasChinese = /[\u4e00-\u9fa5]/;
+  for (const cellAddress in sheet) {
+    if (cellAddress.startsWith('!')) continue;
+    const cell = sheet[cellAddress];
+    if (!cell) continue;
+
+    // Determine font family
+    let fontName = 'Arial';
+    if (cell.v !== undefined && cell.v !== null && hasChinese.test(String(cell.v))) {
+      fontName = 'Microsoft JhengHei';
+    }
+
+    let fontColor = '000000';
+    let isBold = false;
+    let fill = null;
+
+    // Check sheet type specifics
+    if (sheetType === 'Breakdown') {
+      fontColor = '0000FF'; // Blue
+    }
+
+    const match = cellAddress.match(/^([A-Z]+)([0-9]+)$/);
+    if (match) {
+      const colLetter = match[1];
+      const rowNum = parseInt(match[2], 10);
+
+      // Check header rows for bolding
+      if (sheetType === 'BOM') {
+        if (rowNum === 12) {
+          isBold = true;
+        }
+
+        // Red and Bold formatting for E4, G4, L10 on BOM sheet
+        if ((colLetter === 'E' && rowNum === 4) || 
+            (colLetter === 'G' && rowNum === 4) || 
+            (colLetter === 'L' && rowNum === 10)) {
+          fontColor = 'FF0000';
+          isBold = true;
+        }
+
+        // Color coding for data rows starting from row 13
+        if (rowNum >= 13) {
+          const partNoCell = sheet['C' + rowNum];
+          const partNo = partNoCell && partNoCell.v ? String(partNoCell.v).trim().toUpperCase() : '';
+          const descCell = sheet['D' + rowNum];
+          const desc = descCell && descCell.v ? String(descCell.v).trim().toUpperCase() : '';
+
+          const applyRowColor = ['C','D','E','F','G','H','I','J','K','L'].includes(colLetter);
+
+          if (applyRowColor) {
+            if (partNo.startsWith('8B')) {
+              fontColor = 'A9A9A9';
+            } else if (partNo.startsWith('4W')) {
+              fontColor = '0000FF';
+            } else if (partNo.startsWith('5CC') || partNo.startsWith('3FH') || partNo.startsWith('5OG')) {
+              fontColor = 'FFA500';
+            }
+          }
+
+          // Fill yellow for Column L if value is 0 (excluding 8B parts)
+          if (colLetter === 'L') {
+            const val = parseFloat(cell.v);
+            if (val === 0 && !partNo.startsWith('8B')) {
+              fill = {
+                patternType: 'solid',
+                fgColor: { rgb: 'FFFF00' }
+              };
+            }
+          }
+        }
+      } else if (sheetType === 'HL' || sheetType === 'Breakdown') {
+        if (rowNum === 1 || cell.v === 'Total') {
+          isBold = true;
+        }
+      }
+    }
+
+    cell.s = {
+      font: {
+        name: fontName,
+        sz: 10,
+        bold: isBold,
+        color: { rgb: fontColor }
+      }
+    };
+    if (fill) {
+      cell.s.fill = fill;
+    }
+  }
+}
+
+function processBOMWorkbook(wb, filename, defaultRate) {
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  
+  // 1. Detect if workbook is already processed
+  const hasHighLevelSheet = wb.SheetNames.includes('大分類統計');
+  const hasCategorySheet = wb.SheetNames.includes('物料拆解分析');
+  
+  // Quick JSON read to inspect rows
+  const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  
+  // Try to find header row in the first sheet
+  let headerRow = -1;
+  for (let r = 0; r < Math.min(25, raw.length); r++) {
+    const row = raw[r];
+    if (row && String(row[0]).trim() === 'No' && String(row[1]).trim() === '階層' && String(row[2]).trim() === '料號') {
+      headerRow = r;
+      break;
+    }
+  }
+
+  // If header found, check if column 11 (index 11) is already '乘積'
+  const isL12Product = (headerRow !== -1 && raw[headerRow] && String(raw[headerRow][11]).trim() === '乘積');
+  
+  if (hasHighLevelSheet || hasCategorySheet || isL12Product) {
+    // This BOM is already formatted. We extract BOM data for preview.
+    const bomRows = [];
+    const highLevelSum = {
+      '1xxx 主動': 0.0, '2xxx 被動': 0.0, '3xxx 機電與保護': 0.0, '4xxx 連接器線材': 0.0,
+      '5xxx 機構五金': 0.0, '6xxx 輔料與包材': 0.0, '7xxx 磁芯': 0.0, '8xxx 磁性元件': 0.0
+    };
+    const categoryBreakdown = {
+      'DIODE': 0.0, 'IC': 0.0, 'MOS/ TR.': 0.0, 'CAP.': 0.0, 'DIP Res./Cap.': 0.0,
+      'SMD Res./Cap.': 0.0, 'Magnetic': 0.0, 'PCB': 0.0, '機構件/ Other': 0.0,
+      'FAN': 0.0, 'FAN GUARD': 0.0, 'CASE': 0.0, 'O/P WIRE': 0.0
+    };
+    let totalBOMCost = 0.0;
+
+    if (headerRow !== -1) {
+      const dataStart = headerRow + 1;
+      for (let r = dataStart; r < raw.length; r++) {
+        const row = raw[r];
+        if (!row || row.length === 0) continue;
+        const level = String(row[1] ?? '').trim();
+        const partNo = String(row[2] ?? '').trim().toUpperCase();
+        const desc = String(row[3] ?? '').trim().toUpperCase();
+        const qty = parseFloat(row[5]) || 0;
+        const price = parseFloat(row[10]) || 0;
+        const product = parseFloat(row[11]) || (qty * price);
+
+        if (partNo === '' && level === '') continue; // Skip header/spacer rows
+
+        let cat = '';
+        if (level !== '') {
+          totalBOMCost += product;
+
+          // 1. High level categories
+          const firstChar = partNo.charAt(0);
+          const hlKey = firstChar === '1' ? '1xxx 主動' :
+                        firstChar === '2' ? '2xxx 被動' :
+                        firstChar === '3' ? '3xxx 機電與保護' :
+                        firstChar === '4' ? '4xxx 連接器線材' :
+                        firstChar === '5' ? '5xxx 機構五金' :
+                        firstChar === '6' ? '6xxx 輔料與包材' :
+                        firstChar === '7' ? '7xxx 磁芯' :
+                        firstChar === '8' ? '8xxx 磁性元件' : null;
+          if (hlKey) {
+            highLevelSum[hlKey] += product;
+          }
+
+          // 2. 13-category breakdown
+          cat = '機構件/ Other';
+          if (partNo.startsWith('1D')) {
+            cat = 'DIODE';
+          } else if (partNo.startsWith('1I') || partNo.startsWith('1S') || partNo.startsWith('1OT')) {
+            cat = 'IC';
+          } else if (partNo.startsWith('1T') || partNo.startsWith('1M')) {
+            cat = 'MOS/ TR.';
+          } else if ((partNo.startsWith('2EC') || partNo.startsWith('2EG') || partNo.startsWith('2EL')) && !desc.includes('SMD')) {
+            cat = 'CAP.';
+          } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
+            cat = 'DIP Res./Cap.';
+          } else if (partNo.startsWith('2') && desc.includes('SMD')) {
+            cat = 'SMD Res./Cap.';
+          } else if ((partNo.startsWith('7') || partNo.startsWith('8')) && !partNo.startsWith('8B')) {
+            cat = 'Magnetic';
+          } else if (partNo.startsWith('3B') || partNo.startsWith('8B')) {
+            cat = 'PCB';
+          } else if (desc.includes('FAN') && !desc.includes('FAN GUARD') && !partNo.startsWith('1')) {
+            cat = 'FAN';
+          } else if (desc.includes('FAN GUARD')) {
+            cat = 'FAN GUARD';
+          } else if (desc.includes('CASE') || desc.includes('CHASSIS')) {
+            cat = 'CASE';
+          } else if ((partNo.startsWith('4W') || desc.includes('WIRE')) && !desc.includes('GUARD')) {
+            cat = 'O/P WIRE';
+          }
+          categoryBreakdown[cat] += product;
+        }
+
+        let textClass = 'text-normal-row';
+        if (partNo.startsWith('8BB') || (partNo.startsWith('8B') && desc.includes('ASSEMBLY'))) {
+          textClass = 'text-muted-row';
+        } else if (partNo.startsWith('4W')) {
+          textClass = 'text-blue-row';
+        } else if (['5CC', '3FH', '5OG'].some(p => partNo.startsWith(p))) {
+          textClass = 'text-orange-row';
+        }
+
+        let bgClass = '';
+        if (product === 0 && !partNo.startsWith('8BB') && !(partNo.startsWith('8B') && desc.includes('ASSEMBLY'))) {
+          bgClass = 'bg-yellow-row';
+        }
+
+        bomRows.push({
+          no: String(row[0] ?? '').trim(),
+          level: level,
+          partNo: partNo,
+          desc: String(row[3] ?? '').trim(),
+          qty: qty,
+          price: price,
+          product: product,
+          textClass,
+          bgClass,
+          category: cat || 'Other'
+        });
+      }
+    }
+    
+    return {
+      filename,
+      status: 'processed',
+      fixedWb: wb, // Keep as-is
+      issues: ['此檔案已是整理過後的 BOM 規格'],
+      fixLog: [],
+      bomData: bomRows,
+      highLevelSummary: highLevelSum,
+      categoryBreakdown: categoryBreakdown,
+      totalBOMCost: totalBOMCost
+    };
+  }
+
+  // If header row not found in raw BOM, it's an error
+  if (headerRow === -1) {
+    return {
+      filename,
+      status: 'error',
+      fixedWb: null,
+      issues: ['找不到標準標題列 (No/階層/料號)，無法解析。'],
+      fixLog: [],
+      bomData: [],
+      highLevelSummary: [],
+      categoryBreakdown: []
+    };
+  }
+
+  // 2. Formatting & Alignment checks
+  const issues = [];
+  const fixLog = [];
+  let needsFix = false;
+
+  if (headerRow !== STANDARD_HEADER_ROW) {
+    issues.push(`標題列位置偏移：Row ${headerRow} → 應為 Row ${STANDARD_HEADER_ROW}`);
+    needsFix = true;
+  }
+
+  const maxCols = raw.reduce((m, r) => Math.max(m, r.length), 0);
+  if (maxCols > STANDARD_COL_COUNT) {
+    issues.push(`欄位數異常：${maxCols} 欄 → 標準為 ${STANDARD_COL_COUNT} 欄`);
+    needsFix = true;
+  }
+
+  // Shifted sub-item rows check (Col 11-14 shifted instead of Col 9-12)
+  const dataStart = headerRow + 1;
+  let shiftedCount = 0;
+  const shiftedRows = [];
+
+  for (let r = dataStart; r < raw.length; r++) {
+    const row = raw[r];
+    if (!row || row.length === 0) continue;
+    const noVal = String(row[0]).trim();
+    if (!noVal) continue; // Skip spacer or description-only rows if no number
+
+    const col9 = String(row[9] ?? '').trim();
+    const col10 = String(row[10] ?? '').trim();
+    const col11 = String(row[11] ?? '').trim();
+
+    if (col9 === '' && col10 === '' && col11 !== '' && row.length > 13) {
+      shiftedCount++;
+      shiftedRows.push(r);
+    }
+  }
+
+  if (shiftedCount > 0) {
+    issues.push(`發現 ${shiftedCount} 筆子料行欄位偏移 (已自動修正搬移)`);
+    needsFix = true;
+  }
+
+  // ===== FIX ALIGNMENT =====
+  const fixed = raw.map(r => [...r]);
+
+  // Fix shifted rows
+  for (const r of shiftedRows) {
+    const row = fixed[r];
+    const before = `是否為安規料=[${row[9]}] 單價=[${row[10]}] ASL=[${row[11]}] 報價日=[${row[12]}]`;
+    row[9] = row[11];
+    row[10] = row[12];
+    row[11] = row[13] ?? '';
+    row[12] = row[14] ?? '';
+    const after = `是否為安規料=[${row[9]}] 單價=[${row[10]}] ASL=[${row[11]}] 報價日=[${row[12]}]`;
+    fixLog.push({ row: r, partNo: String(row[2]), before, after });
+  }
+
+  // Trim rows to standard width
+  for (let r = 0; r < fixed.length; r++) {
+    fixed[r] = fixed[r].slice(0, STANDARD_COL_COUNT);
+  }
+
+  // Rebuild metadata layout at Row 3-9
+  const findMetaRow = (rawRows, hRow, key) => {
+    const normKey = key.replace(/[:：\s]/g, '').toLowerCase();
+    for (let r = 0; r < hRow; r++) {
+      const row = rawRows[r];
+      if (!row || row.length === 0) continue;
+      const firstCell = String(row[0] ?? '').replace(/[:：\s]/g, '').toLowerCase();
+      if (firstCell === normKey || firstCell.startsWith(normKey)) {
+        return row;
+      }
+    }
+    return null;
+  };
+
+  const dataRows = fixed.slice(dataStart);
+  const rebuilt = [];
+
+  // Rows 0-2: empty
+  for (let i = 0; i < 3; i++) {
+    rebuilt.push(new Array(STANDARD_COL_COUNT).fill(''));
+  }
+
+  // Rows 3-9: metadata
+  const META_KEYS = [
+    '成品/半成品料號：',
+    'BOM 版本：',
+    'Change NO：',
+    'BOM Cost：',
+    '構成總筆數：',
+    'UOM：',
+    '品名規格：'
+  ];
+
+  for (const key of META_KEYS) {
+    const foundRow = findMetaRow(fixed, headerRow, key);
+    if (foundRow) {
+      const sliced = foundRow.slice(0, STANDARD_COL_COUNT);
+      while (sliced.length < STANDARD_COL_COUNT) sliced.push('');
+      // Move values to Column D (index 3) to keep Column A clean and wide Column D visible
+      if (sliced[1] !== '' && sliced[3] === '') {
+        sliced[3] = sliced[1];
+        sliced[1] = '';
+      }
+      rebuilt.push(sliced);
+    } else {
+      const defaultRow = new Array(STANDARD_COL_COUNT).fill('');
+      defaultRow[0] = key;
+      rebuilt.push(defaultRow);
+    }
+  }
+
+  // Row 10: spacer row
+  rebuilt.push(new Array(STANDARD_COL_COUNT).fill(''));
+
+  // Row 11: Standard header row
+  rebuilt.push([...STANDARD_HEADERS]);
+
+  // Row 12+: Data rows
+  for (const dr of dataRows) {
+    const hasAnyData = dr.some(c => String(c ?? '').trim() !== '');
+    if (hasAnyData) {
+      const sliced = dr.slice(0, STANDARD_COL_COUNT);
+      while (sliced.length < STANDARD_COL_COUNT) sliced.push('');
+      rebuilt.push(sliced);
+    }
+  }
+
+  if (headerRow !== STANDARD_HEADER_ROW) {
+    fixLog.unshift({ row: '-', partNo: '-', before: `標題列在 Row ${headerRow}`, after: `標題列對齊至 Row ${STANDARD_HEADER_ROW}` });
+  }
+
+  // ===== RETRIEVE EXCHANGE RATE =====
+  // Check if "Ctrl Q" sheet has a rate
+  let rate = defaultRate;
+  if (wb.SheetNames.includes('Ctrl Q')) {
+    const ctrlQSheet = wb.Sheets['Ctrl Q'];
+    const ctrlQRaw = XLSX.utils.sheet_to_json(ctrlQSheet, { header: 1, defval: '' });
+    if (ctrlQRaw && ctrlQRaw[5] && ctrlQRaw[5][0] !== '') {
+      const parsedRate = parseFloat(ctrlQRaw[5][0]);
+      if (!isNaN(parsedRate) && parsedRate > 0) {
+        rate = parsedRate;
+        issues.push(`自動自 Ctrl Q 工作表讀取匯率：${rate}`);
+      }
+    }
+  }
+
+  // ===== "I NEED" SHEET GENERATION & CATEGORY CALCULATIONS =====
+  // 1. Process main BOM Sheet. We insert a column at Column L (index 11) for "乘積"
+  const finalBOMHeaders = [
+    "No", "階層", "料號", "規格項目-名稱說明", "UOM",
+    "使用數量", "插件位置", "ERP Status", "LT",
+    "是否為安規料", "單價", "乘積", "ASL狀態", "最新報價日(日/月/年)"
+  ];
+
+  const processedBOMRows = [];
+  // Prepare metadata rows
+  for (let r = 0; r < 11; r++) {
+    const row = [...rebuilt[r]];
+    // Insert empty spot at L (index 11) for metadata rows
+    row.splice(11, 0, '');
+    processedBOMRows.push(row);
+  }
+
+  // Re-write E2:F2 = "匯率", E3:F3 = rateValue, E4 = L10, G3 = "美金", G4 = E4/E3, G2 = Date
+  // Excel indexes: Row 2 is 0-indexed 1, Row 3 is 2, Row 4 is 3. Col E is 4, Col F is 5, Col G is 6, Col L is 11.
+  // We'll write values and formulas.
+  processedBOMRows[1][4] = '匯率'; // E2
+  processedBOMRows[2][4] = rate; // E3
+  processedBOMRows[3][4] = { f: 'L10', v: 0.0 }; // E4 (Wait, in rebuilt BOM index 11 is Column L, Row 10 is 9, so total is L10!)
+
+  processedBOMRows[1][6] = '美金'; // G2 is Date, G3 is 美金, G4 is Formula.
+  // Wait, VBA writes G3 = "美金" (row 2 in excel = 0-indexed 2), G2 = Date (row 1 = 0-indexed 1), G4 = E4/E3 (row 3 = 0-indexed 3)
+  processedBOMRows[1][6] = { t: 's', v: new Date().toLocaleDateString('zh-TW') }; // G2 (index 1, col G = 6)
+  processedBOMRows[2][6] = '美金'; // G3 (index 2, col G = 6)
+  processedBOMRows[3][6] = { f: 'E4/E3', v: 0.0 }; // G4 (index 3, col G = 6)
+
+  // Write merged headings metadata
+  processedBOMRows[8][11] = 'TOTAL:'; // L9
+  processedBOMRows[9][11] = { f: 'SUBTOTAL(9,L13:L1500)', v: 0.0 }; // L10
+
+  // Header row
+  processedBOMRows.push(finalBOMHeaders); // Row 12 (0-indexed 11)
+
+  // Data rows & Category mapping pre-calculations
+  const lastRowIndex = rebuilt.length; // Row numbers in the final sheet
+  const formulaLastRow = Math.max(1500, lastRowIndex);
+
+  const bomDataPreview = [];
+  const highLevelSum = {
+    '1xxx 主動': 0.0, '2xxx 被動': 0.0, '3xxx 機電與保護': 0.0, '4xxx 連接器線材': 0.0,
+    '5xxx 機構五金': 0.0, '6xxx 輔料與包材': 0.0, '7xxx 磁芯': 0.0, '8xxx 磁性元件': 0.0
+  };
+  const categoryBreakdown = {
+    'DIODE': 0.0, 'IC': 0.0, 'MOS/ TR.': 0.0, 'CAP.': 0.0, 'DIP Res./Cap.': 0.0,
+    'SMD Res./Cap.': 0.0, 'Magnetic': 0.0, 'PCB': 0.0, '機構件/ Other': 0.0,
+    'FAN': 0.0, 'FAN GUARD': 0.0, 'CASE': 0.0, 'O/P WIRE': 0.0
+  };
+
+  let totalBOMCost = 0.0;
+
+  for (let r = 12; r < rebuilt.length; r++) {
+    const rawRow = rebuilt[r];
+    const level = String(rawRow[1]).trim();
+    const partNo = String(rawRow[2]).trim().toUpperCase();
+    const desc = String(rawRow[3]).trim().toUpperCase();
+    const qty = parseFloat(rawRow[5]) || 0;
+    const price = parseFloat(rawRow[10]) || 0;
+    const product = qty * price;
+
+    const row = [...rawRow];
+    // Insert "乘積" cell (index 11) with Excel formula `=IFERROR(F13*K13, 0)` (excel row = index + 1)
+    const excelRow = r + 1;
+    row.splice(11, 0, { f: `IFERROR(F${excelRow}*K${excelRow},0)`, v: product });
+
+    let cat = '';
+
+    // JS-side calculations for preview and pre-populated values
+    if (level !== '') {
+      totalBOMCost += product;
+
+      // 1. High level categories (1xxx to 8xxx)
+      const firstChar = partNo.charAt(0);
+      const hlKey = firstChar === '1' ? '1xxx 主動' :
+                    firstChar === '2' ? '2xxx 被動' :
+                    firstChar === '3' ? '3xxx 機電與保護' :
+                    firstChar === '4' ? '4xxx 連接器線材' :
+                    firstChar === '5' ? '5xxx 機構五金' :
+                    firstChar === '6' ? '6xxx 輔料與包材' :
+                    firstChar === '7' ? '7xxx 磁芯' :
+                    firstChar === '8' ? '8xxx 磁性元件' : null;
+      if (hlKey) {
+        highLevelSum[hlKey] += product;
+      }
+
+      // 2. 13-category breakdown
+      cat = '機構件/ Other';
+      if (partNo.startsWith('1D')) {
+        cat = 'DIODE';
+      } else if (partNo.startsWith('1I') || partNo.startsWith('1S') || partNo.startsWith('1OT')) {
+        cat = 'IC';
+      } else if (partNo.startsWith('1T') || partNo.startsWith('1M')) {
+        cat = 'MOS/ TR.';
+      } else if ((partNo.startsWith('2EC') || partNo.startsWith('2EG') || partNo.startsWith('2EL')) && !desc.includes('SMD')) {
+        cat = 'CAP.';
+      } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
+        cat = 'DIP Res./Cap.';
+      } else if (partNo.startsWith('2') && desc.includes('SMD')) {
+        cat = 'SMD Res./Cap.';
+      } else if ((partNo.startsWith('7') || partNo.startsWith('8')) && !partNo.startsWith('8B')) {
+        cat = 'Magnetic';
+      } else if (partNo.startsWith('3B') || partNo.startsWith('8B')) {
+        cat = 'PCB';
+      } else if (desc.includes('FAN') && !desc.includes('FAN GUARD') && !partNo.startsWith('1')) {
+        cat = 'FAN';
+      } else if (desc.includes('FAN GUARD')) {
+        cat = 'FAN GUARD';
+      } else if (desc.includes('CASE') || desc.includes('CHASSIS')) {
+        cat = 'CASE';
+      } else if ((partNo.startsWith('4W') || desc.includes('WIRE')) && !desc.includes('GUARD')) {
+        cat = 'O/P WIRE';
+      }
+      categoryBreakdown[cat] += product;
+    }
+
+    processedBOMRows.push(row);
+
+    // Save for preview in web grid (with color rules applied)
+    let textClass = 'text-normal-row';
+    if (partNo.startsWith('8BB') || (partNo.startsWith('8B') && desc.includes('ASSEMBLY'))) {
+      textClass = 'text-muted-row';
+    } else if (partNo.startsWith('4W')) {
+      textClass = 'text-blue-row';
+    } else if (['5CC', '3FH', '5OG'].some(p => partNo.startsWith(p))) {
+      textClass = 'text-orange-row';
+    }
+
+    let bgClass = '';
+    if (product === 0 && !partNo.startsWith('8BB') && !(partNo.startsWith('8B') && desc.includes('ASSEMBLY'))) {
+      bgClass = 'bg-yellow-row';
+    }
+
+    bomDataPreview.push({
+      no: row[0],
+      level: row[1],
+      partNo: row[2],
+      desc: row[3],
+      uom: row[4],
+      qty: row[5],
+      location: row[6],
+      status: row[7],
+      price: row[10],
+      product: product,
+      textClass,
+      bgClass,
+      category: cat || 'Other'
+    });
+  }
+
+  // Update E4 & G4 pre-calculated values
+  processedBOMRows[3][4].v = totalBOMCost;
+  processedBOMRows[3][6].v = totalBOMCost / rate;
+  processedBOMRows[9][11].v = totalBOMCost;
+
+  // ===== CREATE WORKSHEET 1 (BOM) =====
+  const sheet1 = XLSX.utils.aoa_to_sheet(processedBOMRows);
+  
+  // Set formula cell types and format patterns
+  sheet1['E3'].t = 'n';
+  sheet1['E3'].z = '0.00';
+  sheet1['E4'].t = 'n';
+  sheet1['E4'].z = '0.00';
+  sheet1['G4'].t = 'n';
+  sheet1['G4'].z = '0.00';
+  sheet1['L10'].t = 'n';
+  sheet1['L10'].z = '0.0000';
+  for (let r = 12; r < rebuilt.length; r++) {
+    const key = 'L' + (r + 1);
+    if (sheet1[key]) {
+      sheet1[key].t = 'n';
+      sheet1[key].z = '0.0000';
+    }
+  }
+
+  // Auto-filter
+  sheet1['!autofilter'] = { ref: `A12:N${rebuilt.length}` };
+
+  // Set column widths in Sheet 1
+  sheet1['!cols'] = [
+    { wch: 5 },  // A
+    { wch: 5 },  // B
+    { wch: 16 }, // C
+    { wch: 78 }, // D
+    { wch: 6 },  // E
+    { wch: 10 }, // F
+    { wch: 15 }, // G
+    { wch: 12 }, // H
+    { wch: 8 },  // I
+    { wch: 14 }, // J
+    { wch: 12 }, // K
+    { wch: 12 }, // L (乘積)
+    { wch: 12 }, // M
+    { wch: 18 }  // N
+  ];
+
+  // ===== CREATE WORKSHEET 2 (大分類統計) =====
+  const sheet2Rows = [
+    ['大分類', '金額 (NTD)', '百分比']
+  ];
+  const hlKeys = Object.keys(highLevelSum);
+  hlKeys.forEach((key, idx) => {
+    const excelRow = idx + 2; // Data rows start at Row 2
+    const digit = key.charAt(0);
+    const sumifsFormula = `SUMIFS(BOM!$L$13:$L$${formulaLastRow},BOM!$C$13:$C$${formulaLastRow},"${digit}*",BOM!$B$13:$B$${formulaLastRow},"<>\")`;
+    const percentageFormula = `IFERROR(B${excelRow}/$B$10,0)`;
+    
+    sheet2Rows.push([
+      key,
+      { f: sumifsFormula, v: highLevelSum[key] },
+      { f: percentageFormula, v: totalBOMCost > 0 ? highLevelSum[key] / totalBOMCost : 0.0 }
+    ]);
+  });
+  // Total row
+  sheet2Rows.push([
+    'Total',
+    { f: 'SUM(B2:B9)', v: totalBOMCost },
+    { f: 'SUM(C2:C9)', v: totalBOMCost > 0 ? 1.0 : 0.0 }
+  ]);
+
+  const sheet2 = XLSX.utils.aoa_to_sheet(sheet2Rows);
+  // Set types & percentage format
+  for (let idx = 2; idx <= 10; idx++) {
+    sheet2['B' + idx].t = 'n';
+    sheet2['C' + idx].t = 'n';
+    sheet2['C' + idx].z = '0.00%';
+  }
+  sheet2['!cols'] = [
+    { wch: 22 }, // A
+    { wch: 18 }, // B
+    { wch: 12 }  // C
+  ];
+
+  // ===== CREATE WORKSHEET 3 (物料拆解分析) =====
+  const sheet3Rows = [
+    ['項目', '金額 (NTD)', '百分比']
+  ];
+
+  const breakdownKeys = [
+    'DIODE', 'IC', 'MOS/ TR.', 'CAP.', 'DIP Res./Cap.',
+    'SMD Res./Cap.', 'Magnetic', 'PCB', '機構件/ Other',
+    'FAN', 'FAN GUARD', 'CASE', 'O/P WIRE'
+  ];
+
+  breakdownKeys.forEach((key, idx) => {
+    const excelRow = idx + 2;
+    const percentageFormula = `IFERROR(B${excelRow}/$B$16,0)`;
+    let formula = '';
+
+    const rangeC = `BOM!$C$13:$C$${formulaLastRow}`;
+    const rangeB = `BOM!$B$13:$B$${formulaLastRow}`;
+    const rangeD = `BOM!$D$13:$D$${formulaLastRow}`;
+    const rangeL = `BOM!$L$13:$L$${formulaLastRow}`;
+
+    switch (key) {
+      case 'DIODE':
+        formula = `SUMPRODUCT((LEFT(${rangeC},2)="1D")*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'IC':
+        formula = `SUMPRODUCT(((LEFT(${rangeC},2)="1I")+(LEFT(${rangeC},2)="1S")+(LEFT(${rangeC},3)="1OT")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'MOS/ TR.':
+        formula = `SUMPRODUCT(((LEFT(${rangeC},2)="1T")+(LEFT(${rangeC},2)="1M")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'CAP.':
+        formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2EC")+(LEFT(${rangeC},3)="2EG")+(LEFT(${rangeC},3)="2EL"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'DIP Res./Cap.':
+        formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2CX")+(LEFT(${rangeC},3)="2CY")+(LEFT(${rangeC},3)="2EV")+(LEFT(${rangeC},3)="2FN")+(LEFT(${rangeC},3)="2FS")+(LEFT(${rangeC},3)="2OP")+(LEFT(${rangeC},3)="2VR")+(LEFT(${rangeC},3)="3RD")+(LEFT(${rangeC},3)="3UC"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'SMD Res./Cap.':
+        formula = `SUMPRODUCT((LEFT(${rangeC},1)="2")*ISNUMBER(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'Magnetic':
+        formula = `SUMPRODUCT(((LEFT(${rangeC},1)="7")+(LEFT(${rangeC},1)="8")>0)*(LEFT(${rangeC},2)<>"8B")*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'PCB':
+        formula = `SUMPRODUCT(((LEFT(${rangeC},2)="3B")+(LEFT(${rangeC},2)="8B")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'FAN':
+        formula = `SUMPRODUCT(ISNUMBER(SEARCH("FAN",${rangeD}))*ISERR(SEARCH("FAN GUARD",${rangeD}))*(LEFT(${rangeC},1)<>"1")*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'FAN GUARD':
+        formula = `SUMPRODUCT(ISNUMBER(SEARCH("FAN GUARD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'CASE':
+        formula = `SUMPRODUCT(((ISNUMBER(SEARCH("CASE",${rangeD})))+(ISNUMBER(SEARCH("CHASSIS",${rangeD})))>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case 'O/P WIRE':
+        formula = `SUMPRODUCT(((LEFT(${rangeC},2)="4W")+ISNUMBER(SEARCH("WIRE",${rangeD}))>0)*ISERR(SEARCH("GUARD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        break;
+      case '機構件/ Other':
+        // Sum(B2:B9) correspond to DIODE to PCB. Sum(B11:B14) correspond to FAN to WIRE.
+        formula = `SUMPRODUCT((TRIM(${rangeB})<>"")*(${rangeL}))-SUM(B2:B9)-SUM(B11:B14)`;
+        break;
+    }
+
+    sheet3Rows.push([
+      key,
+      { f: formula, v: categoryBreakdown[key] },
+      { f: percentageFormula, v: totalBOMCost > 0 ? categoryBreakdown[key] / totalBOMCost : 0.0 }
+    ]);
+  });
+  // Total row
+  sheet3Rows.push([
+    'Total',
+    { f: 'SUM(B2:B14)', v: totalBOMCost },
+    { f: 'SUM(C2:C14)', v: totalBOMCost > 0 ? 1.0 : 0.0 }
+  ]);
+
+  const sheet3 = XLSX.utils.aoa_to_sheet(sheet3Rows);
+  // Set types & percentage format
+  for (let idx = 2; idx <= 15; idx++) {
+    sheet3['B' + idx].t = 'n';
+    sheet3['C' + idx].t = 'n';
+    sheet3['C' + idx].z = '0.00%';
+  }
+  sheet3['!cols'] = [
+    { wch: 22 }, // A
+    { wch: 18 }, // B
+    { wch: 12 }  // C
+  ];
+
+  // ===== APPLY STYLES =====
+  applyStylesToSheet(sheet1, 'BOM');
+  applyStylesToSheet(sheet2, 'HL');
+  applyStylesToSheet(sheet3, 'Breakdown');
+
+  // ===== PACK WORKBOOK =====
+  const newWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(newWb, sheet1, 'BOM');
+  XLSX.utils.book_append_sheet(newWb, sheet2, '大分類統計');
+  XLSX.utils.book_append_sheet(newWb, sheet3, '物料拆解分析');
+
+  return {
+    filename,
+    status: needsFix ? 'fixed' : 'raw_normal',
+    fixedWb: newWb,
+    issues: needsFix ? issues : ['格式正常，已完成BOM解析。'],
+    fixLog,
+    bomData: bomDataPreview,
+    highLevelSummary: highLevelSum,
+    categoryBreakdown: categoryBreakdown,
+    totalBOMCost: totalBOMCost
+  };
+}
+
+/* ======== UI RENDERING AND UPDATE ======== */
+function updateDashboard() {
+  const total = results.length;
+  const processed = results.filter(r => r.status === 'processed').length;
+  const fixed = results.filter(r => r.status === 'fixed').length;
+  const normal = results.filter(r => r.status === 'raw_normal').length;
+  const err = results.filter(r => r.status === 'error').length;
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statProcessed').textContent = processed;
+  document.getElementById('statFixed').textContent = fixed;
+  document.getElementById('statNormal').textContent = normal;
+  document.getElementById('statError').textContent = err;
+
+  const downloadables = results.filter(r => {
+    if (r.status === 'error') return false;
+    if (r.status === 'processed' && skipProcessedInput.checked) return false;
+    return true;
+  });
+
+  btnDownload.disabled = downloadables.length === 0;
+}
+
+function renderResults() {
+  fileList.innerHTML = '';
+  if (results.length === 0) return;
+
+  results.forEach((r, idx) => {
+    const card = document.createElement('div');
+    card.className = 'file-card';
+
+    let badgeClass = 'badge-error';
+    let badgeText = '❌ 錯誤';
+    let icon = '⚠️';
+
+    if (r.status === 'processed') {
+      badgeClass = 'badge-processed';
+      badgeText = '📋 已整理(略過)';
+      icon = '📄';
+    } else if (r.status === 'fixed') {
+      badgeClass = 'badge-fixed';
+      badgeText = '🔧 已修正格式';
+      icon = '🔧';
+    } else if (r.status === 'raw_normal') {
+      badgeClass = 'badge-normal';
+      badgeText = '✅ 原始規格正常';
+      icon = '✨';
+    }
+
+    let issuesHtml = r.issues.map(iss => `<span>${escHtml(iss)}</span>`).join('');
+
+    let cardHtml = `
+      <div class="file-header">
+        <div class="file-name">${icon} ${escHtml(r.filename)}</div>
+        <span class="badge ${badgeClass}">${badgeText}</span>
+      </div>
+      <div class="file-meta">${issuesHtml}</div>
+    `;
+
+    if (r.status !== 'error') {
+      const detailId = `detail-${idx}`;
+      cardHtml += `
+        <button class="detail-toggle" onclick="toggleDetail('${detailId}')">
+          ▶ 展開整理明細與網頁預覽
+        </button>
+        <div id="${detailId}" class="detail-body hidden">
+          <div class="card-tabs">
+            <button class="card-tab active" onclick="switchCardTab(event, '${detailId}', 'bom')">BOM 資料表</button>
+            <button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'hl')">大分類統計</button>
+            <button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'breakdown')">物料拆解分析</button>
+            ${r.fixLog.length > 0 ? `<button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'log')">修正日誌 (${r.fixLog.length})</button>` : ''}
+          </div>
+          
+          <!-- BOM Tab -->
+          <div class="tab-content" id="${detailId}-bom">
+            <table>
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>階層</th>
+                  <th>料號</th>
+                  <th>規格項目-名稱說明</th>
+                  <th class="txt-right">使用數量</th>
+                  <th class="txt-right">單價</th>
+                  <th class="txt-right">乘積 (NTD)</th>
+                  <th>拆解分類</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${r.bomData.map(row => `
+                  <tr class="${row.bgClass}">
+                    <td>${escHtml(row.no)}</td>
+                    <td class="${row.textClass} bold">${escHtml(row.level)}</td>
+                    <td class="${row.textClass} bold">${escHtml(row.partNo)}</td>
+                    <td class="${row.textClass}" title="${escHtml(row.desc)}">${escHtml(row.desc)}</td>
+                    <td class="${row.textClass} txt-right">${row.qty}</td>
+                    <td class="${row.textClass} txt-right">${row.price}</td>
+                    <td class="${row.textClass} txt-right bold">${row.product.toFixed(4)}</td>
+                    <td><span class="badge badge-processed">${escHtml(row.category)}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- HL Tab -->
+          <div class="tab-content hidden" id="${detailId}-hl">
+            <table>
+              <thead>
+                <tr>
+                  <th>大分類</th>
+                  <th class="txt-right">金額 (NTD)</th>
+                  <th class="txt-right">百分比</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.keys(r.highLevelSummary || {}).map(key => {
+                  const val = r.highLevelSummary[key];
+                  const pct = r.totalBOMCost > 0 ? (val / r.totalBOMCost * 100) : 0;
+                  return `
+                    <tr>
+                      <td class="bold">${escHtml(key)}</td>
+                      <td class="txt-right bold success-txt">${val.toFixed(4)}</td>
+                      <td class="txt-right bold success-txt">${pct.toFixed(2)}%</td>
+                    </tr>
+                  `;
+                }).join('')}
+                <!-- Total Row -->
+                <tr style="border-top: 2px solid var(--border); background-color: rgba(255, 255, 255, 0.05);">
+                  <td class="bold">Total</td>
+                  <td class="txt-right bold success-txt">${(r.totalBOMCost || 0).toFixed(4)}</td>
+                  <td class="txt-right bold success-txt">100.00%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Breakdown Tab -->
+          <div class="tab-content hidden" id="${detailId}-breakdown">
+            <table>
+              <thead>
+                <tr>
+                  <th>項目</th>
+                  <th class="txt-right">金額 (NTD)</th>
+                  <th class="txt-right">百分比</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.keys(r.categoryBreakdown || {}).map(key => {
+                  const val = r.categoryBreakdown[key];
+                  const pct = r.totalBOMCost > 0 ? (val / r.totalBOMCost * 100) : 0;
+                  return `
+                    <tr>
+                      <td class="bold">${escHtml(key)}</td>
+                      <td class="txt-right bold accent-txt">${val.toFixed(4)}</td>
+                      <td class="txt-right bold accent-txt">${pct.toFixed(2)}%</td>
+                    </tr>
+                  `;
+                }).join('')}
+                <!-- Total Row -->
+                <tr style="border-top: 2px solid var(--border); background-color: rgba(255, 255, 255, 0.05);">
+                  <td class="bold">Total</td>
+                  <td class="txt-right bold accent-txt">${(r.totalBOMCost || 0).toFixed(4)}</td>
+                  <td class="txt-right bold accent-txt">100.00%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Log Tab -->
+          ${r.fixLog.length > 0 ? `
+            <div class="tab-content hidden" id="${detailId}-log">
+              <table class="log-table">
+                <thead>
+                  <tr>
+                    <th class="log-row-num">Row</th>
+                    <th class="log-part">料號</th>
+                    <th>修正前</th>
+                    <th>修正後</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${r.fixLog.map(log => `
+                    <tr>
+                      <td class="log-row-num">${log.row}</td>
+                      <td class="log-part">${escHtml(log.partNo)}</td>
+                      <td class="log-val-old">${escHtml(log.before)}</td>
+                      <td class="log-val-new">${escHtml(log.after)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    card.innerHTML = cardHtml;
+    fileList.appendChild(card);
+  });
+}
+
+function toggleDetail(id) {
+  const el = document.getElementById(id);
+  const btn = el.previousElementSibling;
+  if (el.classList.contains('hidden')) {
+    el.classList.remove('hidden');
+    btn.textContent = btn.textContent.replace('▶', '▼');
+  } else {
+    el.classList.add('hidden');
+    btn.textContent = btn.textContent.replace('▼', '▶');
+  }
+}
+
+function switchCardTab(e, detailId, tabName) {
+  // Deactivate all tab buttons in this card
+  const container = e.target.parentElement;
+  container.querySelectorAll('.card-tab').forEach(btn => btn.classList.remove('active'));
+  e.target.classList.add('active');
+
+  // Hide all tab contents in this card
+  const cardBody = document.getElementById(detailId);
+  cardBody.querySelectorAll('.tab-content').forEach(cont => cont.classList.add('hidden'));
+
+  // Show selected tab content
+  document.getElementById(`${detailId}-${tabName}`).classList.remove('hidden');
+}
+
+/* ======== ZIP DOWNLOAD GENERATOR ======== */
+async function downloadZip() {
+  const zip = new JSZip();
+  let fileAddedCount = 0;
+
+  for (const r of results) {
+    if (r.status === 'error') continue;
+    if (r.status === 'processed' && skipProcessedInput.checked) continue;
+
+    // Output filename rules: raw name without extension + .xlsx
+    const rawName = r.filename;
+    const baseName = rawName.includes('.') ? rawName.split('.').slice(0, -1).join('.') : rawName;
+    const outName = `${baseName}.xlsx`;
+
+    try {
+      const outData = XLSX.write(r.fixedWb, { bookType: 'xlsx', type: 'array' });
+      zip.file(outName, outData);
+      fileAddedCount++;
+    } catch (e) {
+      alert(`寫入檔案失敗: ${r.filename}, 錯誤: ${e.message}`);
+    }
+  }
+
+  if (fileAddedCount === 0) {
+    alert('無可下載的檔案！');
+    return;
+  }
+
+  try {
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `BOM_I_need_Fixed_Pack_${new Date().toISOString().slice(0, 10)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('壓縮 ZIP 失敗: ' + err.message);
+  }
+}
+
+/* ======== HELPERS ======== */
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Theme Toggle Event Listener
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+  const isLight = document.documentElement.classList.toggle('light-theme');
+  localStorage.setItem('bom-to-i-need-theme', isLight ? 'light' : 'dark');
+});
+
+// React to checkbox change to update download button state
+skipProcessedInput.addEventListener('change', updateDashboard);
+</script>
+</body>
+</html>

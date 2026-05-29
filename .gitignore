@@ -1,0 +1,9 @@
+# Ignore Excel spreadsheets and temporary test outputs
+*.xls
+*.xlsx
+BOM_I_need_Fixed_Pack_*
+FIXED_BOM_TEST/
+.temp*
+.DS_Store
+node_modules/
+package-lock.json

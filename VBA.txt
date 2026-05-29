@@ -1,0 +1,225 @@
+Sub 整理BOM_Sumifs()
+    Dim rngL As Range, rngC As Range, cell As Range
+    Dim rateValue As Double
+    Dim headerRange As Range
+    Dim startRow As Long, lastRow As Long
+    Dim dataRng As String
+    Dim ws As Worksheet
+    
+    Set ws = ActiveSheet
+    
+    ' 定義匯率變數
+    On Error Resume Next
+    rateValue = ThisWorkbook.Sheets("Ctrl Q").Range("A6").Value
+    On Error GoTo 0
+    
+    Application.ScreenUpdating = False
+    
+    ' ==========================================
+    ' 第一階段：BOM 表格式整理 (維持不變)
+    ' ==========================================
+    With ws
+        .Range("B4:L10").UnMerge
+        .Range("C4:D9").ClearContents
+        .Range("B4:B10").Cut Destination:=.Range("D4")
+        .Range("D4:D10").HorizontalAlignment = xlLeft
+        .Range("G3").Value = "美金"
+        .Range("G3").HorizontalAlignment = xlCenter
+        .Range("G4").FormulaR1C1 = "=RC[-2]/R[-1]C[-2]"
+        
+        ' K3 -> G2
+        .Range("G2").Value = Date
+        .Range("G2").Font.Name = "Arial"
+        .Range("G2").Font.Size = 9
+        .Range("G2").HorizontalAlignment = xlRight
+        
+        ' L 欄插入
+        .Columns("L:L").Insert , CopyOrigin:=xlFormatFromLeftOrAbove
+        .Range("L12").Value = "乘積"
+        ' 預設填入公式，建議範圍大一點以免資料遺漏
+        .Range("L13:L1500").FormulaR1C1 = "=IFERROR(RC[-6]*RC[-1],)"
+        
+        ' TOTAL
+        .Range("L9").Value = "TOTAL:"
+        .Range("L10").FormulaR1C1 = "=SUBTOTAL(9,R[2]C:R[1500]C)"
+        
+        ' 匯率區塊
+        .Range("E2:F2").Merge
+        .Range("E3:F3").Merge
+        .Range("E4:F4").Merge
+        .Range("E2:F4").HorizontalAlignment = xlCenter
+        .Range("E2:F2").Value = "匯率"
+        .Range("E3:F3").Value = rateValue
+        .Range("E4:E4").FormulaR1C1 = "=R[6]C[7]"
+        .Range("E4:F4").NumberFormatLocal = "0.0000_ "
+        
+        ' 欄寬與格式
+        .Columns("A:O").ColumnWidth = 5
+        .Columns("C:C").ColumnWidth = 16
+        .Columns("D:D").ColumnWidth = 78
+        .Columns("G:G").ColumnWidth = 12
+        .Columns("K:O").ColumnWidth = 12 ' 加寬 O 欄以便顯示長標題
+        .Columns("Q:Q").ColumnWidth = 10 ' 新增：稍微加寬 Q 欄放百分比
+        
+        .Range("E4").Font.Color = vbRed
+        .Range("E4").Font.Bold = True
+        .Range("G4").Font.Color = vbRed
+        .Range("G4").Font.Bold = True
+        .Range("L10").Font.Color = vbRed
+        .Range("L10").Font.Bold = True
+        
+        .Range("A12:N12").AutoFilter
+    End With
+    
+    ' ==========================================
+    ' 第二階段：顏色標記
+    ' ==========================================
+    Set rngL = ws.Range("L12:L1500")
+    Set rngC = ws.Range("C13:C1500")
+    
+    ' 1. 先將數值為 0 的填黃色
+    On Error Resume Next
+    For Each cell In rngL.SpecialCells(xlCellTypeVisible)
+        If cell.Value = 0 Then
+            cell.Interior.Color = vbYellow
+        Else
+            cell.Interior.ColorIndex = xlNone
+        End If
+    Next cell
+    On Error GoTo 0
+    
+    ' 2. 針對料號進行字體變色 & 修正 8B 的底色
+    For Each cell In rngC
+        If IsEmpty(cell.Value) Then
+            cell.Offset(0, 9).ClearContents
+            cell.Offset(0, 9).Interior.ColorIndex = xlNone
+        Else
+            Select Case True
+                Case cell.Value Like "8B*"
+                    cell.Resize(1, 10).Font.Color = RGB(169, 169, 169) ' 灰字
+                    cell.Offset(0, 9).Interior.ColorIndex = xlNone     ' 去除 L 欄黃底
+                Case cell.Value Like "4W*"
+                    cell.Resize(1, 10).Font.Color = RGB(0, 0, 255)     ' 藍字
+                Case cell.Value Like "5CC*" Or cell.Value Like "3FH*" Or cell.Value Like "5OG*"
+                    cell.Resize(1, 10).Font.Color = RGB(255, 165, 0)   ' 橘字
+                Case Else
+                    cell.Resize(1, 10).Font.Color = RGB(0, 0, 0)       ' 黑字
+            End Select
+        End If
+    Next cell
+    
+    ' ==========================================
+    ' 第三階段：BOM 成本進階拆解 (精準互斥修正版)
+    ' ==========================================
+    
+    Set headerRange = ws.Columns("C").Find(What:="料號", LookIn:=xlValues, LookAt:=xlPart)
+    
+    If Not headerRange Is Nothing Then
+        startRow = headerRange.Row + 1
+        lastRow = ws.Cells(ws.Rows.Count, "C").End(xlUp).Row
+        
+        Dim rngL_Addr As String, rngC_Addr As String, rngB_Addr As String, rngD_Addr As String
+        rngL_Addr = "$L$" & startRow & ":$L$" & lastRow
+        rngC_Addr = "$C$" & startRow & ":$C$" & lastRow
+        rngB_Addr = "$B$" & startRow & ":$B$" & lastRow
+        rngD_Addr = "$D$" & startRow & ":$D$" & lastRow
+        
+        ' 清空 O 到 Q 欄舊數據
+        ws.Range("O1:Q20").ClearContents
+        
+        ws.Range("O1").Value = "DIODE"
+        ws.Range("O2").Value = "IC"
+        ws.Range("O3").Value = "MOS/ TR."
+        ws.Range("O4").Value = "CAP."
+        ws.Range("O5").Value = "DIP Res./Cap."
+        ws.Range("O6").Value = "SMD Res./Cap."
+        ws.Range("O7").Value = "Magnetic"
+        ws.Range("O8").Value = "PCB"
+        ws.Range("O9").Value = "機構件/ Other"
+        ws.Range("O10").Value = "FAN"
+        ws.Range("O11").Value = "FAN GUARD"
+        ws.Range("O12").Value = "CASE"
+        ws.Range("O13").Value = "O/P WIRE"
+        ws.Range("O14").Value = "Total" ' 新增 Total 標題
+        
+        ' 1. DIODE
+        ws.Range("P1").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",2)=""1D"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 2. IC (包含 1I, 1S, 以及您指定的 1OT)
+        ws.Range("P2").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",2)=""1I"")+(LEFT(" & rngC_Addr & ",2)=""1S"")+(LEFT(" & rngC_Addr & ",3)=""1OT"")>0)*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 3. MOS/ TR.
+        ws.Range("P3").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",2)=""1T"")+(LEFT(" & rngC_Addr & ",2)=""1M"")>0)*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 4. CAP. (精準指定 2EC, 2EG, 2EL，且排除 SMD)
+        ws.Range("P4").Formula = "=SUMPRODUCT((((LEFT(" & rngC_Addr & ",3)=""2EC"")+(LEFT(" & rngC_Addr & ",3)=""2EG"")+(LEFT(" & rngC_Addr & ",3)=""2EL""))>0)*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 5. DIP Res./Cap. (精準指定您提供的 9 組前三碼，且排除 SMD)
+        ws.Range("P5").Formula = "=SUMPRODUCT((((LEFT(" & rngC_Addr & ",3)=""2CX"")+(LEFT(" & rngC_Addr & ",3)=""2CY"")+(LEFT(" & rngC_Addr & ",3)=""2EV"")+(LEFT(" & rngC_Addr & ",3)=""2FN"")+(LEFT(" & rngC_Addr & ",3)=""2FS"")+(LEFT(" & rngC_Addr & ",3)=""2OP"")+(LEFT(" & rngC_Addr & ",3)=""2VR"")+(LEFT(" & rngC_Addr & ",3)=""3RD"")+(LEFT(" & rngC_Addr & ",3)=""3UC""))>0)*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 6. SMD Res./Cap. (只要是 2 開頭，且描述有 SMD 就進來)
+        ws.Range("P6").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""2"")*ISNUMBER(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 7. Magnetic (7或8開頭，但嚴格排除 8B 開頭的 PCBA 組合板)
+        ws.Range("P7").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",1)=""7"")+(LEFT(" & rngC_Addr & ",1)=""8"")>0)*(LEFT(" & rngC_Addr & ",2)<>""8B"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 8. PCB (嚴格只計算 3B 與 8B)
+        ws.Range("P8").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",2)=""3B"")+(LEFT(" & rngC_Addr & ",2)=""8B"")>0)*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 10. FAN (描述有FAN，排除 GUARD，嚴格排除 1 開頭的 IC 電子料)
+        ws.Range("P10").Formula = "=SUMPRODUCT(ISNUMBER(SEARCH(""FAN""," & rngD_Addr & "))*ISERR(SEARCH(""FAN GUARD""," & rngD_Addr & "))*(LEFT(" & rngC_Addr & ",1)<>""1"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 11. FAN GUARD
+        ws.Range("P11").Formula = "=SUMPRODUCT(ISNUMBER(SEARCH(""FAN GUARD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 12. CASE
+        ws.Range("P12").Formula = "=SUMPRODUCT(((ISNUMBER(SEARCH(""CASE""," & rngD_Addr & ")))+(ISNUMBER(SEARCH(""CHASSIS""," & rngD_Addr & ")))>0)*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' 13. O/P WIRE (4W開頭 或 描述有WIRE，但排除描述有 GUARD 的鐵網)
+        ws.Range("P13").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",2)=""4W"")+ISNUMBER(SEARCH(""WIRE""," & rngD_Addr & "))>0)*ISERR(SEARCH(""GUARD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        
+        ' ===============================================
+        ' 9. 機構件/ Other (總和減去其他分類)
+        ' ===============================================
+        ws.Range("P9").Formula = "=SUMPRODUCT((TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & ")) - SUM(P1:P8) - SUM(P10:P13)"
+        
+        ' ===============================================
+        ' 最終加總與格式設定 (新增區域)
+        ' ===============================================
+        ' 填入 P14 加總公式
+        ws.Range("P14").Formula = "=SUM(P1:P13)"
+        
+        ' 填入 Q1:Q14 百分比公式 (使用 IFERROR 避免除以 0)
+        ws.Range("Q1:Q14").Formula = "=IFERROR(P1/$P$14, 0)"
+        
+        ' 設定 Q 欄顯示格式為百分比 (取到小數第二位)
+        ws.Range("Q1:Q14").NumberFormatLocal = "0.00%"
+        
+        ' 將 O1 到 Q14 區域全部設定為藍色字體
+        ws.Range("O1:Q14").Font.Color = vbBlue
+        
+        ' 填入 K 欄標題
+        ws.Range("K1").Value = "1xxx 主動:"
+        ws.Range("K2").Value = "2xxx 被動:"
+        ws.Range("K3").Value = "3xxx 機電與保護:"
+        ws.Range("K4").Value = "4xxx 連接器線材:"
+        ws.Range("K5").Value = "5xxx 機構五金:"
+        ws.Range("K6").Value = "6xxx 輔料與包材:"
+        ws.Range("K7").Value = "7xxx 磁芯:"
+        ws.Range("K8").Value = "8xxx 磁性元件:"
+        ws.Range("L1").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""1"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L2").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""2"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L3").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""3"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L4").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""4"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L5").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""5"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L6").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""6"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L7").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""7"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("L8").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""8"")*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ws.Range("M9").Formula = "=SUM(L1:L8)"
+        
+        
+    End If
+
+    Application.ScreenUpdating = True
+
+End Sub

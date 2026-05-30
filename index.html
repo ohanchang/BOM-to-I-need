@@ -1223,9 +1223,16 @@ function processBOMWorkbook(wb, filename, defaultRate) {
           level: level,
           partNo: partNo,
           desc: String(row[3] ?? '').trim(),
+          uom: String(row[4] ?? '').trim(),
           qty: qty,
+          location: String(row[6] ?? '').trim(),
+          status: String(row[7] ?? '').trim(),
+          lt: String(row[8] ?? '').trim(),
+          safety: String(row[9] ?? '').trim(),
           price: price,
           product: product,
+          asl: String(row[12] ?? '').trim(),
+          quoteDate: String(row[13] ?? '').trim(),
           textClass,
           bgClass,
           category: cat || 'Other'
@@ -1576,8 +1583,12 @@ function processBOMWorkbook(wb, filename, defaultRate) {
       qty: row[5],
       location: row[6],
       status: row[7],
+      lt: row[8],
+      safety: row[9],
       price: row[10],
       product: product,
+      asl: row[11],
+      quoteDate: row[12],
       textClass,
       bgClass,
       category: cat || 'Other'
@@ -2155,6 +2166,13 @@ async function downloadZip() {
   const zip = new JSZip();
   let fileAddedCount = 0;
 
+  const missingDataRows = [];
+  missingDataRows.push([
+    '載入檔案的名稱', 'No', '階層', '料號', '規格項目-名稱說明', 'UOM',
+    '使用數量', '插件位置', 'ERP Status', 'LT', '是否為安規料', '單價',
+    'ASL狀態', '最新報價日(日/月/年)'
+  ]);
+
   for (const r of results) {
     if (r.status === 'error') continue;
     if (r.status === 'processed' && skipProcessedInput.checked) continue;
@@ -2171,11 +2189,114 @@ async function downloadZip() {
     } catch (e) {
       alert(`寫入檔案失敗: ${r.filename}, 錯誤: ${e.message}`);
     }
+
+    // Collect missing price active components from this file
+    const fileMissingItems = r.bomData.filter(item => {
+      const p = (item.partNo || '').toUpperCase();
+      const d = (item.desc || '').toUpperCase();
+      const lvl = String(item.level || '').trim();
+      const isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
+      return lvl !== '' && item.price === 0 && !isAssembly;
+    });
+
+    fileMissingItems.forEach(item => {
+      missingDataRows.push([
+        baseName,
+        item.no ?? '',
+        item.level ?? '',
+        item.partNo ?? '',
+        item.desc ?? '',
+        item.uom ?? '',
+        item.qty ?? 0,
+        item.location ?? '',
+        item.status ?? '',
+        item.lt ?? '',
+        item.safety ?? '',
+        item.price ?? 0,
+        item.asl ?? '',
+        item.quoteDate ?? ''
+      ]);
+    });
   }
 
   if (fileAddedCount === 0) {
     alert('無可下載的檔案！');
     return;
+  }
+
+  // Create Missing Price List.xlsx if there are missing items
+  if (missingDataRows.length > 1) {
+    try {
+      const missingSheet = XLSX.utils.aoa_to_sheet(missingDataRows);
+      
+      // Auto-fit column widths
+      missingSheet['!cols'] = [
+        { wch: 30 }, // 載入檔案的名稱
+        { wch: 6 },  // No
+        { wch: 6 },  // 階層
+        { wch: 16 }, // 料號
+        { wch: 50 }, // 規格項目-名稱說明
+        { wch: 6 },  // UOM
+        { wch: 10 }, // 使用數量
+        { wch: 15 }, // 插件位置
+        { wch: 12 }, // ERP Status
+        { wch: 8 },  // LT
+        { wch: 14 }, // 是否為安規料
+        { wch: 10 }, // 單價
+        { wch: 12 }, // ASL狀態
+        { wch: 18 }  // 最新報價日(日/月/年)
+      ];
+
+      // Format unit price cells (Column L is index 11) as numbers
+      for (let r = 1; r < missingDataRows.length; r++) {
+        const cellRef = 'L' + (r + 1);
+        if (missingSheet[cellRef]) {
+          missingSheet[cellRef].t = 'n';
+          missingSheet[cellRef].z = '0.00';
+        }
+      }
+
+      // Apply premium fonts and styles
+      const hasChinese = /[\u4e00-\u9fa5]/;
+      for (const cellAddress in missingSheet) {
+        if (cellAddress.startsWith('!')) continue;
+        const cell = missingSheet[cellAddress];
+        if (!cell) continue;
+        const match = cellAddress.match(/^([A-Z]+)([0-9]+)$/);
+        if (match) {
+          const rowNum = parseInt(match[2], 10);
+          let fontName = 'Arial';
+          if (cell.v !== undefined && cell.v !== null && hasChinese.test(String(cell.v))) {
+            fontName = 'Microsoft JhengHei';
+          }
+          if (rowNum === 1) {
+            cell.s = {
+              font: {
+                name: fontName,
+                sz: 10,
+                bold: true,
+                color: { rgb: '000000' }
+              }
+            };
+          } else {
+            cell.s = {
+              font: {
+                name: fontName,
+                sz: 10,
+                color: { rgb: '000000' }
+              }
+            };
+          }
+        }
+      }
+
+      const missingWb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(missingWb, missingSheet, 'Missing Prices');
+      const missingOutData = XLSX.write(missingWb, { bookType: 'xlsx', type: 'array' });
+      zip.file('Missing Price List.xlsx', missingOutData);
+    } catch (err) {
+      alert('建立缺價格主料清單失敗: ' + err.message);
+    }
   }
 
   try {

@@ -25,6 +25,29 @@
      - **相似推薦**：若存在前綴相同（前五碼或更多匹配）且單價大於 0 的料號（通常為版次遞增累進的料號），則推薦最近版本的相似單價。
    - 支援在網頁上點擊「套用」推薦單價，或手動「補登價格」；套用/補登後系統將即時重新計算整份 BOM、大分類及物料拆解的總額與佔比，並在下載導出時將修正後的單價直接寫入 Excel。
 
+
+### 🐛 Bug 修復紀錄
+
+#### Bug #1：`findMetaRow` 重複宣告導致整個 Script 無法執行
+- **症狀**：網頁完全無反應——上傳按鈕點擊、拖曳檔案均失效，不產生任何錯誤提示。
+- **根本原因**：`processBOMWorkbook` 函式內部有兩個 `const findMetaRow = ...` 宣告（分別位於函式頭部及 `// Rebuild metadata layout` 區段），ES6 嚴格規則中同一 scope 不允許重複 `const` 宣告，瀏覽器在解析階段就拋出 `ReferenceError: Identifier 'findMetaRow' has already been declared`，導致整個 `<script>` 區塊完全不執行。
+- **為何難以察覺**：頁面外觀正常、Console 不一定明顯顯示（需主動開啟 DevTools 才看到），且 `node verify.js` 使用 Node.js 執行，不受瀏覽器嚴格 const 作用域影響，故驗證通過但瀏覽器仍失效。
+- **修復**：刪除第二個重複的 `const findMetaRow` 宣告（原 line ~1317）。
+- **防範**：今後凡是在函式內 hoist 或移動宣告時，必須同步刪除原位置的舊宣告。
+
+#### Bug #2：三層巢狀 Template Literal 造成 JS 解析失敗
+- **症狀**：與 Bug #1 相同——整個 script 無法執行。
+- **根本原因**：`renderResults()` 中 `cardHtml` 大型 template literal 內，missing tab 那段使用了 `${missingItems.map(item => { ... return \`...${rec.score}...\`; }).join('')}`，造成三層反引號嵌套（外層 cardHtml、中層 ternary template、內層 map callback return template）。JavaScript 解析器對於「map callback 內又有 if/let/const/return + 第三層 template literal」的組合產生解析歧義，引發靜默錯誤。
+- **修復**：將 missing rows 渲染邏輯抽出至獨立函式 `renderMissingRowsHtml()`，改用字串串接（`+`），完全消除巢狀 template literal。
+- **防範**：凡是大型 template literal 內的 `${}` 中需要多行邏輯（if、let、const、巢狀 template），一律抽成獨立函式再呼叫。
+
+### ✅ 驗證步驟
+- [x] 執行 `node verify.js`，3/3 測試通過，Excel 三個分頁驗證正確。
+- [x] 執行 `node -e "new Function(script)"` 語法靜態驗證，確認無重複宣告或解析錯誤。
+- [x] 瀏覽器開啟 `http://localhost:8000/index.html`，上傳 BOM 檔案正常，分頁切換正常，缺主料分析顯示正確。
+- [x] 跨 BOM 推薦：同時載入多個 BOM 後，缺主料分析頁顯示精確或相似推薦，點擊「套用」後即時重算總價。
+- [x] 修改匯率後自動觸發 `recalculateAll()`，所有卡片數字同步更新。
+
 ---
 
 ## 🚀 v1.1：樣式、匯率與預覽優化版本 (Style & Preview Enhancement)

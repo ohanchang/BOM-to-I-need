@@ -559,6 +559,47 @@
   .text-blue-row { color: #3b82f6; }
   .text-orange-row { color: #f97316; }
   .bg-yellow-row { background: var(--warning-bg) !important; }
+  /* Missing Price Analysis Tab Styling */
+  .missing-rec-badge {
+    background: var(--success-bg);
+    color: var(--success);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .missing-rec-badge.similar {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+  .btn-apply-rec {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-apply-rec:hover {
+    background: var(--accent-light);
+  }
+  .override-input {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    border-radius: 4px;
+    width: 90px;
+    font-size: 0.8rem;
+    text-align: right;
+  }
+  .override-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -572,7 +613,7 @@
       </button>
     </div>
     <h1>BOM to I need</h1>
-    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.1)</p>
+    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.2)</p>
   </header>
 
   <!-- Dashboard -->
@@ -640,6 +681,139 @@
 <script>
 /* ======== GLOBAL STATE ======== */
 let results = []; // Store results of processed files
+let priceOverrides = {}; // { filename: { partNo: price } }
+
+/* ======== SMART PRICE RECOMMENDATION & OVERRIDES ======== */
+function findRecommendation(partNo, currentFilename) {
+  if (!partNo) return null;
+  const p = partNo.trim().toUpperCase();
+  if (p.length < 5) return null;
+
+  let bestMatch = null;
+  let bestScore = 0; // Length of matching prefix
+
+  for (const r of results) {
+    if (!r.bomData || r.bomData.length === 0) continue;
+    
+    for (const item of r.bomData) {
+      if (!item.partNo) continue;
+      const otherP = item.partNo.trim().toUpperCase();
+      if (item.price <= 0) continue;
+
+      // Exact match gets highest priority
+      if (otherP === p) {
+        return {
+          price: item.price,
+          partNo: item.partNo,
+          filename: r.filename,
+          type: 'exact'
+        };
+      }
+
+      // Calculate common prefix length
+      let commonLen = 0;
+      const minLen = Math.min(p.length, otherP.length);
+      for (let i = 0; i < minLen; i++) {
+        if (p[i] === otherP[i]) {
+          commonLen++;
+        } else {
+          break;
+        }
+      }
+
+      // Prefix match length >= 5
+      if (commonLen >= 5 && commonLen > bestScore) {
+        bestScore = commonLen;
+        bestMatch = {
+          price: item.price,
+          partNo: item.partNo,
+          filename: r.filename,
+          type: 'similar',
+          score: commonLen
+        };
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function setPriceOverride(fileIdx, partNo, val) {
+  const r = results[fileIdx];
+  if (!r) return;
+  const filename = r.filename;
+  if (!priceOverrides[filename]) {
+    priceOverrides[filename] = {};
+  }
+  const numVal = parseFloat(val);
+  if (isNaN(numVal) || numVal < 0) {
+    delete priceOverrides[filename][partNo];
+  } else {
+    priceOverrides[filename][partNo] = numVal;
+  }
+  recalculateAll();
+}
+
+function recalculateAll() {
+  const rateValue = parseFloat(exchangeRateInput.value) || 30.0;
+  
+  // Save expand & tab states
+  const expandedState = {};
+  const activeTabState = {};
+  results.forEach((_, idx) => {
+    const detail = document.getElementById(`detail-${idx}`);
+    if (detail) {
+      expandedState[idx] = !detail.classList.contains('hidden');
+      const tabs = detail.querySelectorAll('.card-tab');
+      for (const tab of tabs) {
+        if (tab.classList.contains('active')) {
+          const onClickStr = tab.getAttribute('onclick') || '';
+          const parts = onClickStr.split("'");
+          if (parts.length >= 6) {
+            activeTabState[idx] = parts[5];
+          }
+          break;
+        }
+      }
+    }
+  });
+
+  // Re-process all workbooks using originalData
+  results = results.map(r => {
+    if (r.status === 'error' || !r.originalData) return r;
+    try {
+      const wb = XLSX.read(r.originalData, { type: 'array' });
+      const newResult = processBOMWorkbook(wb, r.filename, rateValue);
+      newResult.originalData = r.originalData; // preserve raw data
+      return newResult;
+    } catch (err) {
+      r.issues = ['重新計算失敗: ' + err.message];
+      return r;
+    }
+  });
+
+  updateDashboard();
+  renderResults();
+
+  // Restore states
+  results.forEach((_, idx) => {
+    const detailId = `detail-${idx}`;
+    const detail = document.getElementById(detailId);
+    if (detail && expandedState[idx]) {
+      detail.classList.remove('hidden');
+      const btn = detail.previousElementSibling;
+      if (btn && btn.classList.contains('detail-toggle')) {
+        btn.textContent = '▼ 收合整理明細與網頁預覽';
+      }
+      
+      const tabName = activeTabState[idx] || 'bom';
+      const tabBtn = Array.from(detail.querySelectorAll('.card-tab')).find(btn => btn.getAttribute('onclick').includes(`'${tabName}'`));
+      if (tabBtn) {
+        switchCardTab({ currentTarget: tabBtn }, detailId, tabName);
+      }
+    }
+  });
+}
 
 /* ======== CONSTANTS FOR BOM FIX & I NEED ======== */
 const STANDARD_HEADER_ROW = 11; // 0-indexed row 11 is row 12
@@ -674,6 +848,7 @@ exchangeRateInput.addEventListener('change', () => {
   if (isNaN(val) || val <= 0) val = 30.00;
   exchangeRateInput.value = val.toFixed(2);
   localStorage.setItem('bom-to-i-need-rate', val.toFixed(2));
+  recalculateAll();
 });
 
 /* ======== EVENT LISTENERS ======== */
@@ -731,6 +906,7 @@ async function processFiles(files) {
       const data = await readFileAsArrayBuffer(file);
       const wb = XLSX.read(data, { type: 'array' });
       const result = processBOMWorkbook(wb, file.name, rateValue);
+      result.originalData = data;
       results.push(result);
     } catch (err) {
       results.push({
@@ -781,10 +957,7 @@ function applyStylesToSheet(sheet, sheetType) {
     let isBold = false;
     let fill = null;
 
-    // Check sheet type specifics
-    if (sheetType === 'Breakdown') {
-      fontColor = '0000FF'; // Blue
-    }
+
 
     const match = cellAddress.match(/^([A-Z]+)([0-9]+)$/);
     if (match) {
@@ -860,10 +1033,6 @@ function processBOMWorkbook(wb, filename, defaultRate) {
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   
-  // 1. Detect if workbook is already processed
-  const hasHighLevelSheet = wb.SheetNames.includes('大分類統計');
-  const hasCategorySheet = wb.SheetNames.includes('物料拆解分析');
-  
   // Quick JSON read to inspect rows
   const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
   
@@ -876,6 +1045,33 @@ function processBOMWorkbook(wb, filename, defaultRate) {
       break;
     }
   }
+
+  const findMetaRow = (rawRows, hRow, key) => {
+    const normKey = key.replace(/[:：\s]/g, '').toLowerCase();
+    for (let r = 0; r < hRow; r++) {
+      const row = rawRows[r];
+      if (!row || row.length === 0) continue;
+      const firstCell = String(row[0] ?? '').replace(/[:：\s]/g, '').toLowerCase();
+      if (firstCell === normKey || firstCell.startsWith(normKey)) {
+        return row;
+      }
+    }
+    return null;
+  };
+
+  let modelNumber = '';
+  let version = '';
+  const mRow = findMetaRow(raw, headerRow !== -1 ? headerRow : 11, '成品/半成品料號：');
+  if (mRow) {
+    modelNumber = String(mRow[1] || mRow[3] || '').trim();
+  }
+  const vRow = findMetaRow(raw, headerRow !== -1 ? headerRow : 11, 'BOM 版本：');
+  if (vRow) {
+    version = String(vRow[1] || vRow[3] || '').trim();
+  }
+
+  const hasHighLevelSheet = wb.SheetNames.includes('大分類統計');
+  const hasCategorySheet = wb.SheetNames.includes('物料拆解分析');
 
   // If header found, check if column 11 (index 11) is already '乘積'
   const isL12Product = (headerRow !== -1 && raw[headerRow] && String(raw[headerRow][11]).trim() === '乘積');
@@ -903,8 +1099,21 @@ function processBOMWorkbook(wb, filename, defaultRate) {
         const partNo = String(row[2] ?? '').trim().toUpperCase();
         const desc = String(row[3] ?? '').trim().toUpperCase();
         const qty = parseFloat(row[5]) || 0;
-        const price = parseFloat(row[10]) || 0;
-        const product = parseFloat(row[11]) || (qty * price);
+        const overridePrice = typeof priceOverrides !== 'undefined' ? (priceOverrides[filename] || {})[partNo] : undefined;
+        const price = overridePrice !== undefined ? overridePrice : (parseFloat(row[10]) || 0);
+        const product = qty * price;
+
+        if (overridePrice !== undefined) {
+          const cellK = XLSX.utils.encode_cell({ r: r, c: 10 });
+          const cellL = XLSX.utils.encode_cell({ r: r, c: 11 });
+          if (!ws[cellK]) ws[cellK] = { t: 'n' };
+          ws[cellK].v = price;
+          ws[cellK].t = 'n';
+          
+          if (!ws[cellL]) ws[cellL] = { t: 'n' };
+          ws[cellL].v = product;
+          ws[cellL].t = 'n';
+        }
 
         if (partNo === '' && level === '') continue; // Skip header/spacer rows
 
@@ -983,18 +1192,48 @@ function processBOMWorkbook(wb, filename, defaultRate) {
           category: cat || 'Other'
         });
       }
+      if (priceOverrides[filename] && Object.keys(priceOverrides[filename]).length > 0) {
+        const cellE4 = XLSX.utils.encode_cell({ r: 3, c: 4 });
+        const cellG4 = XLSX.utils.encode_cell({ r: 3, c: 6 });
+        const cellL10 = XLSX.utils.encode_cell({ r: 9, c: 11 });
+        const rateVal = parseFloat(ws[XLSX.utils.encode_cell({ r: 2, c: 4 })]?.v) || defaultRate;
+        if (ws[cellE4]) { ws[cellE4].v = totalBOMCost; ws[cellE4].t = 'n'; }
+        if (ws[cellG4]) { ws[cellG4].v = totalBOMCost / rateVal; ws[cellG4].t = 'n'; }
+        if (ws[cellL10]) { ws[cellL10].v = totalBOMCost; ws[cellL10].t = 'n'; }
+        if (wb.SheetNames.includes('大分類統計')) {
+          const s2 = wb.Sheets['大分類統計'];
+          const keys = Object.keys(highLevelSum);
+          keys.forEach((key, idx) => {
+            const cellVal = s2[XLSX.utils.encode_cell({ r: idx + 1, c: 1 })];
+            if (cellVal) { cellVal.v = highLevelSum[key]; cellVal.t = 'n'; }
+          });
+          const totalCell = s2[XLSX.utils.encode_cell({ r: 9, c: 1 })];
+          if (totalCell) { totalCell.v = totalBOMCost; totalCell.t = 'n'; }
+        }
+        if (wb.SheetNames.includes('物料拆解分析')) {
+          const s3 = wb.Sheets['物料拆解分析'];
+          const keys = Object.keys(categoryBreakdown);
+          keys.forEach((key, idx) => {
+            const cellVal = s3[XLSX.utils.encode_cell({ r: idx + 1, c: 1 })];
+            if (cellVal) { cellVal.v = categoryBreakdown[key]; cellVal.t = 'n'; }
+          });
+          const totalCell = s3[XLSX.utils.encode_cell({ r: 14, c: 1 })];
+          if (totalCell) { totalCell.v = totalBOMCost; totalCell.t = 'n'; }
+        }
+      }
     }
-    
     return {
       filename,
       status: 'processed',
-      fixedWb: wb, // Keep as-is
+      fixedWb: wb,
       issues: ['此檔案已是整理過後的 BOM 規格'],
       fixLog: [],
       bomData: bomRows,
       highLevelSummary: highLevelSum,
       categoryBreakdown: categoryBreakdown,
-      totalBOMCost: totalBOMCost
+      totalBOMCost: totalBOMCost,
+      modelNumber,
+      version
     };
   }
 
@@ -1075,18 +1314,6 @@ function processBOMWorkbook(wb, filename, defaultRate) {
   }
 
   // Rebuild metadata layout at Row 3-9
-  const findMetaRow = (rawRows, hRow, key) => {
-    const normKey = key.replace(/[:：\s]/g, '').toLowerCase();
-    for (let r = 0; r < hRow; r++) {
-      const row = rawRows[r];
-      if (!row || row.length === 0) continue;
-      const firstCell = String(row[0] ?? '').replace(/[:：\s]/g, '').toLowerCase();
-      if (firstCell === normKey || firstCell.startsWith(normKey)) {
-        return row;
-      }
-    }
-    return null;
-  };
 
   const dataRows = fixed.slice(dataStart);
   const rebuilt = [];
@@ -1112,10 +1339,14 @@ function processBOMWorkbook(wb, filename, defaultRate) {
     if (foundRow) {
       const sliced = foundRow.slice(0, STANDARD_COL_COUNT);
       while (sliced.length < STANDARD_COL_COUNT) sliced.push('');
-      // Move values to Column D (index 3) to keep Column A clean and wide Column D visible
-      if (sliced[1] !== '' && sliced[3] === '') {
-        sliced[3] = sliced[1];
+      if (key === 'BOM 版本：' || key === 'Change NO：') {
+        const val = (sliced[3] !== '' ? sliced[3] : sliced[1]) || '';
+        sliced[3] = val;
         sliced[1] = '';
+      } else {
+        const val = (sliced[1] !== '' ? sliced[1] : sliced[3]) || '';
+        sliced[1] = val;
+        sliced[3] = '';
       }
       rebuilt.push(sliced);
     } else {
@@ -1220,7 +1451,9 @@ function processBOMWorkbook(wb, filename, defaultRate) {
     const partNo = String(rawRow[2]).trim().toUpperCase();
     const desc = String(rawRow[3]).trim().toUpperCase();
     const qty = parseFloat(rawRow[5]) || 0;
-    const price = parseFloat(rawRow[10]) || 0;
+    const overridePrice = typeof priceOverrides !== 'undefined' ? (priceOverrides[filename] || {})[partNo] : undefined;
+    const price = overridePrice !== undefined ? overridePrice : (parseFloat(rawRow[10]) || 0);
+    rawRow[10] = price;
     const product = qty * price;
 
     const row = [...rawRow];
@@ -1505,11 +1738,47 @@ function processBOMWorkbook(wb, filename, defaultRate) {
     bomData: bomDataPreview,
     highLevelSummary: highLevelSum,
     categoryBreakdown: categoryBreakdown,
-    totalBOMCost: totalBOMCost
+    totalBOMCost: totalBOMCost,
+    modelNumber,
+    version
   };
 }
 
 /* ======== UI RENDERING AND UPDATE ======== */
+
+// Helper: render HTML for the missing price analysis tab rows
+function renderMissingRowsHtml(missingItems, fileIdx, filename) {
+  return missingItems.map(function(item) {
+    var rec = findRecommendation(item.partNo, filename);
+    var recHtml = '';
+    if (rec) {
+      var typeLabel = rec.type === 'exact' ? '精確' : ('相似 (' + rec.score + ' 碼)');
+      var badgeClass = rec.type === 'exact' ? 'missing-rec-badge' : 'missing-rec-badge similar';
+      recHtml =
+        '<span class="' + badgeClass + '">' +
+          '$' + rec.price + ' [' + typeLabel + ' - 來自 ' + escHtml(rec.filename) + ']' +
+        '</span>' +
+        '<button class="btn-apply-rec" onclick="setPriceOverride(' + fileIdx + ',\'' + item.partNo + '\',' + rec.price + ')">套用</button>';
+    } else {
+      recHtml = '<span style="color: var(--text-muted);">無推薦價格</span>';
+    }
+    var overrideVal = ((priceOverrides[filename] || {})[item.partNo] !== undefined)
+      ? (priceOverrides[filename] || {})[item.partNo]
+      : '';
+    return '<tr>' +
+      '<td class="bold">' + escHtml(item.level) + '</td>' +
+      '<td class="bold">' + escHtml(item.partNo) + '</td>' +
+      '<td title="' + escHtml(item.desc) + '">' + escHtml(item.desc) + '</td>' +
+      '<td class="txt-right">' + item.qty + '</td>' +
+      '<td>' + recHtml + '</td>' +
+      '<td class="txt-right">' +
+        '<input type="number" step="0.01" min="0" placeholder="未輸入" class="override-input" ' +
+        'value="' + overrideVal + '" onchange="setPriceOverride(' + fileIdx + ',\'' + item.partNo + '\',this.value)" />' +
+      '</td>' +
+      '</tr>';
+  }).join('');
+}
+
 function updateDashboard() {
   const total = results.length;
   const processed = results.filter(r => r.status === 'processed').length;
@@ -1568,6 +1837,14 @@ function renderResults() {
       <div class="file-meta">${issuesHtml}</div>
     `;
 
+    const missingItems = (r.status === 'error') ? [] : r.bomData.filter(item => {
+      const p = (item.partNo || '').toUpperCase();
+      const d = (item.desc || '').toUpperCase();
+      const lvl = String(item.level || '').trim();
+      const isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
+      return lvl !== '' && item.price === 0 && !isAssembly;
+    });
+
     if (r.status !== 'error') {
       const detailId = `detail-${idx}`;
       cardHtml += `
@@ -1579,6 +1856,7 @@ function renderResults() {
             <button class="card-tab active" onclick="switchCardTab(event, '${detailId}', 'bom')">BOM 資料表</button>
             <button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'hl')">大分類統計</button>
             <button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'breakdown')">物料拆解分析</button>
+            ${missingItems.length > 0 ? `<button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'missing')">缺主料價格分析 (${missingItems.length})</button>` : ''}
             ${r.fixLog.length > 0 ? `<button class="card-tab" onclick="switchCardTab(event, '${detailId}', 'log')">修正日誌 (${r.fixLog.length})</button>` : ''}
           </div>
           
@@ -1678,6 +1956,25 @@ function renderResults() {
             </table>
           </div>
 
+          <!-- Missing Price Analysis Tab -->
+          ${missingItems.length > 0 ? `
+            <div class="tab-content hidden" id="${detailId}-missing">
+              <table>
+                <thead>
+                  <tr>
+                    <th>階層</th>
+                    <th>料號</th>
+                    <th>規格項目-名稱說明</th>
+                    <th class="txt-right">使用數量</th>
+                    <th>智慧推薦單價 (跨 BOM 掃描)</th>
+                    <th class="txt-right">自訂單價 (NTD)</th>
+                  </tr>
+                </thead>
+                <tbody>${renderMissingRowsHtml(missingItems, idx, r.filename)}</tbody>
+              </table>
+            </div>
+          ` : ''}
+
           <!-- Log Tab -->
           ${r.fixLog.length > 0 ? `
             <div class="tab-content hidden" id="${detailId}-log">
@@ -1725,17 +2022,26 @@ function toggleDetail(id) {
 }
 
 function switchCardTab(e, detailId, tabName) {
+  const target = e.currentTarget || e.target || e;
+  if (!target) return;
   // Deactivate all tab buttons in this card
-  const container = e.target.parentElement;
-  container.querySelectorAll('.card-tab').forEach(btn => btn.classList.remove('active'));
-  e.target.classList.add('active');
+  const container = target.parentElement;
+  if (container) {
+    container.querySelectorAll('.card-tab').forEach(btn => btn.classList.remove('active'));
+  }
+  target.classList.add('active');
 
   // Hide all tab contents in this card
   const cardBody = document.getElementById(detailId);
-  cardBody.querySelectorAll('.tab-content').forEach(cont => cont.classList.add('hidden'));
+  if (cardBody) {
+    cardBody.querySelectorAll('.tab-content').forEach(cont => cont.classList.add('hidden'));
+  }
 
   // Show selected tab content
-  document.getElementById(`${detailId}-${tabName}`).classList.remove('hidden');
+  const targetContent = document.getElementById(`${detailId}-${tabName}`);
+  if (targetContent) {
+    targetContent.classList.remove('hidden');
+  }
 }
 
 /* ======== ZIP DOWNLOAD GENERATOR ======== */

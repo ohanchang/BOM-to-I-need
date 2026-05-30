@@ -649,7 +649,7 @@
       </button>
     </div>
     <h1>BOM to I need</h1>
-    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.3)</p>
+    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.4)</p>
   </header>
 
   <!-- Dashboard -->
@@ -1182,9 +1182,9 @@ function processBOMWorkbook(wb, filename, defaultRate) {
             cat = 'IC';
           } else if (partNo.startsWith('1T') || partNo.startsWith('1M')) {
             cat = 'MOS/ TR.';
-          } else if ((partNo.startsWith('2EC') || partNo.startsWith('2EG') || partNo.startsWith('2EL')) && !desc.includes('SMD')) {
+          } else if (partNo.startsWith('2E') && !partNo.startsWith('2EV') && !desc.includes('SMD')) {
             cat = 'CAP.';
-          } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
+          } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC', '2R'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
             cat = 'DIP Res./Cap.';
           } else if (partNo.startsWith('2') && desc.includes('SMD')) {
             cat = 'SMD Res./Cap.';
@@ -1528,9 +1528,9 @@ function processBOMWorkbook(wb, filename, defaultRate) {
         cat = 'IC';
       } else if (partNo.startsWith('1T') || partNo.startsWith('1M')) {
         cat = 'MOS/ TR.';
-      } else if ((partNo.startsWith('2EC') || partNo.startsWith('2EG') || partNo.startsWith('2EL')) && !desc.includes('SMD')) {
+      } else if (partNo.startsWith('2E') && !partNo.startsWith('2EV') && !desc.includes('SMD')) {
         cat = 'CAP.';
-      } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
+      } else if (['2CX', '2CY', '2EV', '2FN', '2FS', '2OP', '2VR', '3RD', '3UC', '2R'].some(p => partNo.startsWith(p)) && !desc.includes('SMD')) {
         cat = 'DIP Res./Cap.';
       } else if (partNo.startsWith('2') && desc.includes('SMD')) {
         cat = 'SMD Res./Cap.';
@@ -1699,10 +1699,10 @@ function processBOMWorkbook(wb, filename, defaultRate) {
         formula = `SUMPRODUCT(((LEFT(${rangeC},2)="1T")+(LEFT(${rangeC},2)="1M")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`;
         break;
       case 'CAP.':
-        formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2EC")+(LEFT(${rangeC},3)="2EG")+(LEFT(${rangeC},3)="2EL"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        formula = `SUMPRODUCT((LEFT(${rangeC},2)="2E")*(LEFT(${rangeC},3)<>"2EV")*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
         break;
       case 'DIP Res./Cap.':
-        formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2CX")+(LEFT(${rangeC},3)="2CY")+(LEFT(${rangeC},3)="2EV")+(LEFT(${rangeC},3)="2FN")+(LEFT(${rangeC},3)="2FS")+(LEFT(${rangeC},3)="2OP")+(LEFT(${rangeC},3)="2VR")+(LEFT(${rangeC},3)="3RD")+(LEFT(${rangeC},3)="3UC"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
+        formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2CX")+(LEFT(${rangeC},3)="2CY")+(LEFT(${rangeC},3)="2EV")+(LEFT(${rangeC},3)="2FN")+(LEFT(${rangeC},3)="2FS")+(LEFT(${rangeC},3)="2OP")+(LEFT(${rangeC},3)="2VR")+(LEFT(${rangeC},3)="3RD")+(LEFT(${rangeC},3)="3UC")+(LEFT(${rangeC},2)="2R"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;
         break;
       case 'SMD Res./Cap.':
         formula = `SUMPRODUCT((LEFT(${rangeC},1)="2")*ISNUMBER(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`;

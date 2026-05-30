@@ -4,6 +4,28 @@
 
 ---
 
+## 🚀 v1.4：被動元件分類精度優化與 VBA 程式更新 (Passive Categorization Optimization & VBA Sync)
+**時間點：2026-05-30**
+
+### 變更摘要
+1. **電容分類 (CAP.) 規則優化**：
+   - 將比對條件從寫死的 `2EC`, `2EG`, `2EL` 擴大為只要是被動電容 `2E` 開頭且排除 `2EV`（壓敏電阻）者。
+   - 修正直插式電解電容如 `2ED012541SH8EB` (品名為 `CAP, AL`) 因前綴不符被誤判為「機構件/ Other」的缺陷。
+2. **直插電阻/電容 (DIP Res./Cap.) 規則更新**：
+   - 判斷清單中新增了直插電阻 `2R` 開頭的前綴。
+   - 修正直插繞線電阻如 `2RD0008500GP` (品名為 `RES, WIREWOUND`) 被漏判為「機構件/ Other」的缺陷。
+   - 邏輯保持互斥：含有 `SMD` 關鍵字的 `2R` 開頭貼片電阻會被 `!desc.includes('SMD')` 排除，正確流向 `SMD Res./Cap.`。
+3. **VBA 代碼同步修改與註記**：
+   - 針對 VBA 程序（`VBA.txt`）中的 `SUMPRODUCT` 篩選公式進行同步升級，確保導出 Excel 後的手動執行版公式與網頁版 Excel 導出公式維持 100% 相同，並加上詳細中文註解。
+4. **物料分類邏輯文件**：
+   - 於 `BOM_CLASSIFICATION.md` 獨立產出詳細的 13 大類物料分類規則與運作邏輯說明文件。
+
+### ✅ 驗證步驟
+- [x] 執行 `node verify.js` 驗證 `good.xls`、`good 2.xls` 及 `good 3.xls` 生產的 Excel 計算，3/3 完全通過。
+- [x] 比對優化後的分類金額，原分類至 `機構件/ Other` 的繞線電阻（`2RD...`）與電解電容（`2ED...`）已被精準分流至 `DIP Res./Cap.` 與 `CAP.`，佔比更貼近實際。
+
+---
+
 ## 🚀 v1.3：推薦料號顯示、一鍵套用與 UI 強化 (Recommended Part Display & UX Enhancement)
 **時間點：2026-05-30**
 

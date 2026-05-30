@@ -322,8 +322,8 @@ function processBOMWorkbook(wb, filename, defaultRate) {
       case 'DIODE': formula = `SUMPRODUCT((LEFT(${rangeC},2)="1D")*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
       case 'IC': formula = `SUMPRODUCT(((LEFT(${rangeC},2)="1I")+(LEFT(${rangeC},2)="1S")+(LEFT(${rangeC},3)="1OT")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
       case 'MOS/ TR.': formula = `SUMPRODUCT(((LEFT(${rangeC},2)="1T")+(LEFT(${rangeC},2)="1M")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
-      case 'CAP.': formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2EC")+(LEFT(${rangeC},3)="2EG")+(LEFT(${rangeC},3)="2EL"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
-      case 'DIP Res./Cap.': formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2CX")+(LEFT(${rangeC},3)="2CY")+(LEFT(${rangeC},3)="2EV")+(LEFT(${rangeC},3)="2FN")+(LEFT(${rangeC},3)="2FS")+(LEFT(${rangeC},3)="2OP")+(LEFT(${rangeC},3)="2VR")+(LEFT(${rangeC},3)="3RD")+(LEFT(${rangeC},3)="3UC"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
+      case 'CAP.': formula = `SUMPRODUCT((LEFT(${rangeC},2)="2E")*(LEFT(${rangeC},3)<>"2EV")*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
+      case 'DIP Res./Cap.': formula = `SUMPRODUCT((((LEFT(${rangeC},3)="2CX")+(LEFT(${rangeC},3)="2CY")+(LEFT(${rangeC},3)="2EV")+(LEFT(${rangeC},3)="2FN")+(LEFT(${rangeC},3)="2FS")+(LEFT(${rangeC},3)="2OP")+(LEFT(${rangeC},3)="2VR")+(LEFT(${rangeC},3)="3RD")+(LEFT(${rangeC},3)="3UC")+(LEFT(${rangeC},2)="2R"))>0)*ISERR(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
       case 'SMD Res./Cap.': formula = `SUMPRODUCT((LEFT(${rangeC},1)="2")*ISNUMBER(SEARCH("SMD",${rangeD}))*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
       case 'Magnetic': formula = `SUMPRODUCT(((LEFT(${rangeC},1)="7")+(LEFT(${rangeC},1)="8")>0)*(LEFT(${rangeC},2)<>"8B")*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;
       case 'PCB': formula = `SUMPRODUCT(((LEFT(${rangeC},2)="3B")+(LEFT(${rangeC},2)="8B")>0)*(TRIM(${rangeB})<>"")*(${rangeL}))`; break;

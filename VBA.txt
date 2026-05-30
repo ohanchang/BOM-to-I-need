@@ -151,11 +151,13 @@ Sub 整理BOM_Sumifs()
         ' 3. MOS/ TR.
         ws.Range("P3").Formula = "=SUMPRODUCT(((LEFT(" & rngC_Addr & ",2)=""1T"")+(LEFT(" & rngC_Addr & ",2)=""1M"")>0)*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
         
-        ' 4. CAP. (精準指定 2EC, 2EG, 2EL，且排除 SMD)
-        ws.Range("P4").Formula = "=SUMPRODUCT((((LEFT(" & rngC_Addr & ",3)=""2EC"")+(LEFT(" & rngC_Addr & ",3)=""2EG"")+(LEFT(" & rngC_Addr & ",3)=""2EL""))>0)*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ' 4. CAP. (直插電解/固態電容：2E 開頭且排除壓敏電阻 2EV，並排除 SMD)
+        ' [2026/05/30 更新] 擴大匹配為 2E 開頭 (原本僅 2EC, 2EG, 2EL) 以相容 2ED 等其它 DIP 電容，避免漏判至 Other
+        ws.Range("P4").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",2)=""2E"")*(LEFT(" & rngC_Addr & ",3)<>""2EV"")*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
         
-        ' 5. DIP Res./Cap. (精準指定您提供的 9 組前三碼，且排除 SMD)
-        ws.Range("P5").Formula = "=SUMPRODUCT((((LEFT(" & rngC_Addr & ",3)=""2CX"")+(LEFT(" & rngC_Addr & ",3)=""2CY"")+(LEFT(" & rngC_Addr & ",3)=""2EV"")+(LEFT(" & rngC_Addr & ",3)=""2FN"")+(LEFT(" & rngC_Addr & ",3)=""2FS"")+(LEFT(" & rngC_Addr & ",3)=""2OP"")+(LEFT(" & rngC_Addr & ",3)=""2VR"")+(LEFT(" & rngC_Addr & ",3)=""3RD"")+(LEFT(" & rngC_Addr & ",3)=""3UC""))>0)*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
+        ' 5. DIP Res./Cap. (直插電阻與其它電容：包含 9 組前綴或 2R 開頭的直插電阻，並排除 SMD)
+        ' [2026/05/30 更新] 加入 2R 匹配 (如 2RD 繞線電阻)，避免 DIP 電阻漏判至 Other。非 SMD 的 2R 會落在此處，SMD 的 2R 則由 P6 捕獲
+        ws.Range("P5").Formula = "=SUMPRODUCT((((LEFT(" & rngC_Addr & ",3)=""2CX"")+(LEFT(" & rngC_Addr & ",3)=""2CY"")+(LEFT(" & rngC_Addr & ",3)=""2EV"")+(LEFT(" & rngC_Addr & ",3)=""2FN"")+(LEFT(" & rngC_Addr & ",3)=""2FS"")+(LEFT(" & rngC_Addr & ",3)=""2OP"")+(LEFT(" & rngC_Addr & ",3)=""2VR"")+(LEFT(" & rngC_Addr & ",3)=""3RD"")+(LEFT(" & rngC_Addr & ",3)=""3UC"")+(LEFT(" & rngC_Addr & ",2)=""2R""))>0)*ISERR(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"
         
         ' 6. SMD Res./Cap. (只要是 2 開頭，且描述有 SMD 就進來)
         ws.Range("P6").Formula = "=SUMPRODUCT((LEFT(" & rngC_Addr & ",1)=""2"")*ISNUMBER(SEARCH(""SMD""," & rngD_Addr & "))*(TRIM(" & rngB_Addr & ")<>"""")*(" & rngL_Addr & "))"

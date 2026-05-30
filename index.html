@@ -600,6 +600,42 @@
     outline: none;
     border-color: var(--accent);
   }
+
+  /* Section title redesign */
+  .section-title-text {
+    font-size: 1.4rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--text-primary) 20%, var(--accent-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.01em;
+  }
+
+  /* One-click apply all button */
+  .btn-apply-all {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #fff;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+    transition: all 0.2s;
+    animation: pulse-glow 2s infinite;
+  }
+  .btn-apply-all:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.5);
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 2px 8px rgba(245,158,11,0.35); }
+    50% { box-shadow: 0 2px 18px rgba(245,158,11,0.65); }
+  }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -613,7 +649,7 @@
       </button>
     </div>
     <h1>BOM to I need</h1>
-    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.2)</p>
+    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.3)</p>
   </header>
 
   <!-- Dashboard -->
@@ -661,7 +697,7 @@
   <!-- Upload Drop Zone -->
   <div class="drop-zone" id="dropZone">
     <div class="drop-icon">📤</div>
-    <div class="drop-text">拖放複數個 BOM 檔案至此，或點擊選取檔案</div>
+    <div class="drop-text">拖放複數個 BOM 檔案至此，或點擊選取檔案，將執行BOM表格式修正、價格計算、用料比例分析、缺料對比。</div>
     <div class="drop-subtext">支援 Excel (.xls, .xlsx) 格式</div>
     <input type="file" id="fileInput" multiple accept=".xls, .xlsx, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
   </div>
@@ -673,7 +709,10 @@
 
   <!-- Results Section -->
   <div class="section-title">
-    <span>處理檔案清單</span>
+    <span class="section-title-text">📋 處理檔案清單</span>
+    <button class="btn-apply-all" id="btnApplyAll" onclick="applyAllRecommendations()" style="display:none">
+      ⚡ 一鍵套用推薦單價
+    </button>
   </div>
   <div class="file-list" id="fileList"></div>
 </div>
@@ -1746,20 +1785,39 @@ function processBOMWorkbook(wb, filename, defaultRate) {
 
 /* ======== UI RENDERING AND UPDATE ======== */
 
+// Helper: highlight the common prefix between two part numbers in blue
+function highlightCommonPrefix(recPartNo, targetPartNo) {
+  var r = recPartNo.toUpperCase();
+  var t = targetPartNo.toUpperCase();
+  var commonLen = 0;
+  var minLen = Math.min(r.length, t.length);
+  for (var i = 0; i < minLen; i++) {
+    if (r[i] === t[i]) commonLen++;
+    else break;
+  }
+  if (commonLen < 6) {
+    return escHtml(recPartNo);
+  }
+  return '<span style="color:#3b82f6;font-weight:700">' + escHtml(recPartNo.slice(0, commonLen)) + '</span>' + escHtml(recPartNo.slice(commonLen));
+}
+
 // Helper: render HTML for the missing price analysis tab rows
 function renderMissingRowsHtml(missingItems, fileIdx, filename) {
   return missingItems.map(function(item) {
     var rec = findRecommendation(item.partNo, filename);
+    var recPartNoHtml = '';
     var recHtml = '';
     if (rec) {
       var typeLabel = rec.type === 'exact' ? '精確' : ('相似 (' + rec.score + ' 碼)');
       var badgeClass = rec.type === 'exact' ? 'missing-rec-badge' : 'missing-rec-badge similar';
+      recPartNoHtml = highlightCommonPrefix(rec.partNo, item.partNo);
       recHtml =
         '<span class="' + badgeClass + '">' +
           '$' + rec.price + ' [' + typeLabel + ' - 來自 ' + escHtml(rec.filename) + ']' +
         '</span>' +
         '<button class="btn-apply-rec" onclick="setPriceOverride(' + fileIdx + ',\'' + item.partNo + '\',' + rec.price + ')">套用</button>';
     } else {
+      recPartNoHtml = '<span style="color:var(--text-muted)">—</span>';
       recHtml = '<span style="color: var(--text-muted);">無推薦價格</span>';
     }
     var overrideVal = ((priceOverrides[filename] || {})[item.partNo] !== undefined)
@@ -1770,6 +1828,7 @@ function renderMissingRowsHtml(missingItems, fileIdx, filename) {
       '<td class="bold">' + escHtml(item.partNo) + '</td>' +
       '<td title="' + escHtml(item.desc) + '">' + escHtml(item.desc) + '</td>' +
       '<td class="txt-right">' + item.qty + '</td>' +
+      '<td class="bold" style="font-size:0.82rem">' + recPartNoHtml + '</td>' +
       '<td>' + recHtml + '</td>' +
       '<td class="txt-right">' +
         '<input type="number" step="0.01" min="0" placeholder="未輸入" class="override-input" ' +
@@ -1777,6 +1836,51 @@ function renderMissingRowsHtml(missingItems, fileIdx, filename) {
       '</td>' +
       '</tr>';
   }).join('');
+}
+
+// One-click apply all smart recommendations across all loaded BOMs
+function applyAllRecommendations() {
+  var applied = 0;
+  results.forEach(function(r, idx) {
+    if (r.status === 'error' || !r.bomData) return;
+    var filename = r.filename;
+    r.bomData.forEach(function(item) {
+      var p = (item.partNo || '').toUpperCase();
+      var d = (item.desc || '').toUpperCase();
+      var lvl = String(item.level || '').trim();
+      var isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
+      if (lvl === '' || item.price !== 0 || isAssembly) return;
+      // Skip if already overridden
+      if ((priceOverrides[filename] || {})[item.partNo] !== undefined) return;
+      var rec = findRecommendation(item.partNo, filename);
+      if (rec) {
+        if (!priceOverrides[filename]) priceOverrides[filename] = {};
+        priceOverrides[filename][item.partNo] = rec.price;
+        applied++;
+      }
+    });
+  });
+  if (applied > 0) recalculateAll();
+  updateApplyAllBtn();
+}
+
+// Show/hide the one-click apply button based on whether any unpriced items have recommendations
+function updateApplyAllBtn() {
+  var btn = document.getElementById('btnApplyAll');
+  if (!btn) return;
+  var hasAny = results.some(function(r) {
+    if (r.status === 'error' || !r.bomData) return false;
+    return r.bomData.some(function(item) {
+      var p = (item.partNo || '').toUpperCase();
+      var d = (item.desc || '').toUpperCase();
+      var lvl = String(item.level || '').trim();
+      var isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
+      if (lvl === '' || item.price !== 0 || isAssembly) return false;
+      if ((priceOverrides[r.filename] || {})[item.partNo] !== undefined) return false;
+      return findRecommendation(item.partNo, r.filename) !== null;
+    });
+  });
+  btn.style.display = hasAny ? 'flex' : 'none';
 }
 
 function updateDashboard() {
@@ -1799,6 +1903,7 @@ function updateDashboard() {
   });
 
   btnDownload.disabled = downloadables.length === 0;
+  updateApplyAllBtn();
 }
 
 function renderResults() {
@@ -1966,6 +2071,7 @@ function renderResults() {
                     <th>料號</th>
                     <th>規格項目-名稱說明</th>
                     <th class="txt-right">使用數量</th>
+                    <th>推薦料號</th>
                     <th>智慧推薦單價 (跨 BOM 掃描)</th>
                     <th class="txt-right">自訂單價 (NTD)</th>
                   </tr>

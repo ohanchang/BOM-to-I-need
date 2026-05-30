@@ -428,6 +428,14 @@
   .badge-fixed { background: var(--warning-bg); color: var(--warning); }
   .badge-normal { background: var(--success-bg); color: var(--success); }
   .badge-error { background: var(--error-bg); color: var(--error); }
+  .badge-warning { background: var(--warning-bg); color: var(--warning); }
+
+  .file-status-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
 
   .file-meta {
     font-size: 0.875rem;
@@ -1943,16 +1951,6 @@ function renderResults() {
       icon = '✨';
     }
 
-    let issuesHtml = r.issues.map(iss => `<span>${escHtml(iss)}</span>`).join('');
-
-    let cardHtml = `
-      <div class="file-header">
-        <div class="file-name">${icon} ${escHtml(r.filename)}</div>
-        <span class="badge ${badgeClass}">${badgeText}</span>
-      </div>
-      <div class="file-meta">${issuesHtml}</div>
-    `;
-
     const missingItems = (r.status === 'error') ? [] : r.bomData.filter(item => {
       const p = (item.partNo || '').toUpperCase();
       const d = (item.desc || '').toUpperCase();
@@ -1960,6 +1958,19 @@ function renderResults() {
       const isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
       return lvl !== '' && item.price === 0 && !isAssembly;
     });
+
+    let issuesHtml = r.issues.map(iss => `<span>${escHtml(iss)}</span>`).join('');
+
+    let cardHtml = `
+      <div class="file-header">
+        <div class="file-name">${icon} ${escHtml(r.filename)}</div>
+        <div class="file-status-group">
+          <span class="badge ${badgeClass}">${badgeText}</span>
+          ${missingItems.length > 0 ? `<span class="badge badge-warning">⚠️ 缺主料價格 (${missingItems.length})</span>` : ''}
+        </div>
+      </div>
+      <div class="file-meta">${issuesHtml}</div>
+    `;
 
     if (r.status !== 'error') {
       const detailId = `detail-${idx}`;

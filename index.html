@@ -657,7 +657,7 @@
       </button>
     </div>
     <h1>BOM to I need</h1>
-    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.5)</p>
+    <p>批次格式整理、偏移修正與物料拆解分頁重構工具 (v1.6 | 2026-07-04)</p>
   </header>
 
   <!-- Dashboard -->
@@ -1017,11 +1017,17 @@ function applyStylesToSheet(sheet, sheetType) {
           isBold = true;
         }
 
-        // Red and Bold formatting for E4, G4, L10 on BOM sheet
-        if ((colLetter === 'E' && rowNum === 4) || 
-            (colLetter === 'G' && rowNum === 4) || 
+        // Red and Bold formatting for D2, F4, F6, G4, G6, L10 on BOM sheet
+        if ((colLetter === 'D' && rowNum === 2) ||
+            (colLetter === 'F' && (rowNum === 4 || rowNum === 6)) || 
+            (colLetter === 'G' && (rowNum === 4 || rowNum === 6)) || 
             (colLetter === 'L' && rowNum === 10)) {
           fontColor = 'FF0000';
+          isBold = true;
+        }
+
+        // Bold formatting for F2 label
+        if (colLetter === 'F' && rowNum === 2) {
           isBold = true;
         }
 
@@ -1247,11 +1253,15 @@ function processBOMWorkbook(wb, filename, defaultRate) {
         });
       }
       if (priceOverrides[filename] && Object.keys(priceOverrides[filename]).length > 0) {
-        const cellE4 = XLSX.utils.encode_cell({ r: 3, c: 4 });
+        const cellF4 = XLSX.utils.encode_cell({ r: 3, c: 5 });
         const cellG4 = XLSX.utils.encode_cell({ r: 3, c: 6 });
         const cellL10 = XLSX.utils.encode_cell({ r: 9, c: 11 });
-        const rateVal = parseFloat(ws[XLSX.utils.encode_cell({ r: 2, c: 4 })]?.v) || defaultRate;
-        if (ws[cellE4]) { ws[cellE4].v = totalBOMCost; ws[cellE4].t = 'n'; }
+        // Try F3 first (new layout), fallback to E3 (old layout)
+        const rateVal = parseFloat(ws[XLSX.utils.encode_cell({ r: 2, c: 5 })]?.v) || parseFloat(ws[XLSX.utils.encode_cell({ r: 2, c: 4 })]?.v) || defaultRate;
+        // Try F4 first, fallback to E4 for already-processed files
+        const cellE4 = XLSX.utils.encode_cell({ r: 3, c: 4 });
+        if (ws[cellF4]) { ws[cellF4].v = totalBOMCost; ws[cellF4].t = 'n'; }
+        else if (ws[cellE4]) { ws[cellE4].v = totalBOMCost; ws[cellE4].t = 'n'; }
         if (ws[cellG4]) { ws[cellG4].v = totalBOMCost / rateVal; ws[cellG4].t = 'n'; }
         if (ws[cellL10]) { ws[cellL10].v = totalBOMCost; ws[cellL10].t = 'n'; }
         if (wb.SheetNames.includes('大分類統計')) {
@@ -1402,6 +1412,15 @@ function processBOMWorkbook(wb, filename, defaultRate) {
         sliced[1] = val;
         sliced[3] = '';
       }
+      // Clear C and D columns for specific metadata rows to prevent label obstruction
+      // Row index in rebuilt: 3=成品/半成品料號(Row4), 6=BOM Cost(Row7), 7=構成總筆數(Row8), 8=UOM(Row9), 9=品名規格(Row10)
+      if (key === '成品/半成品料號：') {
+        sliced[2] = ''; // C4
+        sliced[3] = ''; // D4
+      } else if (key === 'BOM Cost：' || key === '構成總筆數：' || key === 'UOM：' || key === '品名規格：') {
+        sliced[2] = ''; // C7-C10
+        sliced[3] = ''; // D7-D10
+      }
       rebuilt.push(sliced);
     } else {
       const defaultRow = new Array(STANDARD_COL_COUNT).fill('');
@@ -1462,18 +1481,23 @@ function processBOMWorkbook(wb, filename, defaultRate) {
     processedBOMRows.push(row);
   }
 
-  // Re-write E2:F2 = "匯率", E3:F3 = rateValue, E4 = L10, G3 = "美金", G4 = E4/E3, G2 = Date
+  // Re-write F2 = "匯率", F3 = rateValue, F4 = L10, G3 = "美金", G4 = F4/F3, G2 = Date
   // Excel indexes: Row 2 is 0-indexed 1, Row 3 is 2, Row 4 is 3. Col E is 4, Col F is 5, Col G is 6, Col L is 11.
-  // We'll write values and formulas.
-  processedBOMRows[1][4] = '匯率'; // E2
-  processedBOMRows[2][4] = rate; // E3
-  processedBOMRows[3][4] = { f: 'L10', v: 0.0 }; // E4 (Wait, in rebuilt BOM index 11 is Column L, Row 10 is 9, so total is L10!)
+  // Data moved from E to F column for better layout spacing.
+  processedBOMRows[1][4] = ''; // E2 clear
+  processedBOMRows[2][4] = ''; // E3 clear
+  processedBOMRows[3][4] = ''; // E4 clear
+  processedBOMRows[1][5] = '匯率'; // F2
+  processedBOMRows[2][5] = rate; // F3
+  processedBOMRows[3][5] = { f: 'L10', v: 0.0 }; // F4 (bold red, applied via applyStylesToSheet)
 
-  processedBOMRows[1][6] = '美金'; // G2 is Date, G3 is 美金, G4 is Formula.
-  // Wait, VBA writes G3 = "美金" (row 2 in excel = 0-indexed 2), G2 = Date (row 1 = 0-indexed 1), G4 = E4/E3 (row 3 = 0-indexed 3)
-  processedBOMRows[1][6] = { t: 's', v: new Date().toLocaleDateString('zh-TW') }; // G2 (index 1, col G = 6)
-  processedBOMRows[2][6] = '美金'; // G3 (index 2, col G = 6)
-  processedBOMRows[3][6] = { f: 'E4/E3', v: 0.0 }; // G4 (index 3, col G = 6)
+  processedBOMRows[1][6] = { t: 's', v: new Date().toLocaleDateString('zh-TW') }; // G2
+  processedBOMRows[2][6] = '美金'; // G3
+  processedBOMRows[3][6] = { f: 'F4/F3', v: 0.0 }; // G4 = F4/F3
+
+  // F6 = 物料拆解分析!B15 (Total from breakdown sheet), G6 = F6/F3
+  processedBOMRows[5][5] = { f: '物料拆解分析!B15', v: 0.0 }; // F6 (bold red)
+  processedBOMRows[5][6] = { f: 'F6/F3', v: 0.0 }; // G6 (bold red)
 
   // Write merged headings metadata
   processedBOMRows[8][11] = 'TOTAL:'; // L9
@@ -1603,23 +1627,44 @@ function processBOMWorkbook(wb, filename, defaultRate) {
     });
   }
 
-  // Update E4 & G4 pre-calculated values
-  processedBOMRows[3][4].v = totalBOMCost;
+  // Update F4 & G4 pre-calculated values
+  processedBOMRows[3][5].v = totalBOMCost;
   processedBOMRows[3][6].v = totalBOMCost / rate;
   processedBOMRows[9][11].v = totalBOMCost;
+
+  // === Shortage status in D2 (0-indexed row 1, col 3) ===
+  // Count missing main materials (level != '', price == 0, not assembly 8B)
+  const mainMissing = bomDataPreview.filter(item => {
+    const p = (item.partNo || '').toUpperCase();
+    const d = (item.desc || '').toUpperCase();
+    const lvl = String(item.level || '').trim();
+    const isAssembly = p.startsWith('8BB') || (p.startsWith('8B') && d.includes('ASSEMBLY'));
+    return lvl !== '' && item.price === 0 && !isAssembly;
+  });
+  const missingCount = mainMissing.length;
+  if (missingCount === 0) {
+    processedBOMRows[1][3] = '主料沒有缺料'; // D2
+  } else if (missingCount === 1 && mainMissing.every(m => (m.partNo || '').toUpperCase().startsWith('6LL'))) {
+    processedBOMRows[1][3] = '主料只缺大標'; // D2
+  } else if (mainMissing.length > 0 && mainMissing.every(m => (m.partNo || '').toUpperCase().startsWith('6LL'))) {
+    processedBOMRows[1][3] = '主料只缺大標'; // D2 - all missing are 6LL
+  } else if (missingCount >= 2) {
+    processedBOMRows[1][3] = `主料缺${missingCount}個料`; // D2
+  } else {
+    // Only 1 missing and it's not 6LL
+    processedBOMRows[1][3] = `主料缺${missingCount}個料`; // D2
+  }
 
   // ===== CREATE WORKSHEET 1 (BOM) =====
   const sheet1 = XLSX.utils.aoa_to_sheet(processedBOMRows);
   
   // Set formula cell types and format patterns
-  sheet1['E3'].t = 'n';
-  sheet1['E3'].z = '0.00';
-  sheet1['E4'].t = 'n';
-  sheet1['E4'].z = '0.00';
-  sheet1['G4'].t = 'n';
-  sheet1['G4'].z = '0.00';
-  sheet1['L10'].t = 'n';
-  sheet1['L10'].z = '0.0000';
+  if (sheet1['F3']) { sheet1['F3'].t = 'n'; sheet1['F3'].z = '0.00'; }
+  if (sheet1['F4']) { sheet1['F4'].t = 'n'; sheet1['F4'].z = '0.00'; }
+  if (sheet1['G4']) { sheet1['G4'].t = 'n'; sheet1['G4'].z = '0.00'; }
+  if (sheet1['F6']) { sheet1['F6'].t = 'n'; sheet1['F6'].z = '0.00'; }
+  if (sheet1['G6']) { sheet1['G6'].t = 'n'; sheet1['G6'].z = '0.00'; }
+  if (sheet1['L10']) { sheet1['L10'].t = 'n'; sheet1['L10'].z = '0.0000'; }
   for (let r = 12; r < rebuilt.length; r++) {
     const key = 'L' + (r + 1);
     if (sheet1[key]) {
@@ -1650,20 +1695,25 @@ function processBOMWorkbook(wb, filename, defaultRate) {
   ];
 
   // ===== CREATE WORKSHEET 2 (大分類統計) =====
+  // Layout: A=大分類, B=SUMPRODUCT金額, C=B百分比
   const sheet2Rows = [
     ['大分類', '金額 (NTD)', '百分比']
   ];
   const hlKeys = Object.keys(highLevelSum);
+  const rangeC_hl = `BOM!$C$13:$C$${formulaLastRow}`;
+  const rangeB_hl = `BOM!$B$13:$B$${formulaLastRow}`;
+  const rangeL_hl = `BOM!$L$13:$L$${formulaLastRow}`;
   hlKeys.forEach((key, idx) => {
     const excelRow = idx + 2; // Data rows start at Row 2
     const digit = key.charAt(0);
-    const sumifsFormula = `SUMIFS(BOM!$L$13:$L$${formulaLastRow},BOM!$C$13:$C$${formulaLastRow},"${digit}*",BOM!$B$13:$B$${formulaLastRow},"<>\")`;
-    const percentageFormula = `IFERROR(B${excelRow}/$B$10,0)`;
+    // B column: SUMPRODUCT formula (similar to 物料拆解分析)
+    const sumproductFormula = `SUMPRODUCT((LEFT(${rangeC_hl},1)="${digit}")*(TRIM(${rangeB_hl})<>"")*(${rangeL_hl}))`;
+    const percentageB = `IFERROR(B${excelRow}/$B$10,0)`;
     
     sheet2Rows.push([
       key,
-      { f: sumifsFormula, v: highLevelSum[key] },
-      { f: percentageFormula, v: totalBOMCost > 0 ? highLevelSum[key] / totalBOMCost : 0.0 }
+      { f: sumproductFormula, v: highLevelSum[key] },
+      { f: percentageB, v: totalBOMCost > 0 ? highLevelSum[key] / totalBOMCost : 0.0 }
     ]);
   });
   // Total row
@@ -1699,7 +1749,7 @@ function processBOMWorkbook(wb, filename, defaultRate) {
 
   breakdownKeys.forEach((key, idx) => {
     const excelRow = idx + 2;
-    const percentageFormula = `IFERROR(B${excelRow}/$B$16,0)`;
+    const percentageFormula = `IFERROR(B${excelRow}/$B$15,0)`;
     let formula = '';
 
     const rangeC = `BOM!$C$13:$C$${formulaLastRow}`;

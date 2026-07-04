@@ -3,6 +3,7 @@
 *.xlsx
 BOM_I_need_Fixed_Pack_*
 FIXED_BOM_TEST/
+DATA/
 .temp*
 .DS_Store
 node_modules/
